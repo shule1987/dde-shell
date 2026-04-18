@@ -2,8 +2,11 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+pragma ComponentBehavior: Bound
+
 import QtQuick 2.15
 import QtQuick.Controls 2.15
+import QtQml.Models 2.15
 
 import org.deepin.ds 1.0
 import org.deepin.ds.dock 1.0
@@ -14,11 +17,11 @@ ContainmentItem {
     id: taskmanager
     property bool useColumnLayout: Panel.rootObject.useColumnLayout
     property int dockOrder: 16
-    property real remainingSpacesForTaskManager: Panel.itemAlignment === Dock.LeftAlignment ? Panel.rootObject.dockLeftSpaceForCenter : Panel.rootObject.dockRemainingSpaceForCenter
+    property real remainingSpacesForTaskManager: Panel.rootObject.adaptiveFashionMode ? 0 : (Panel.itemAlignment === Dock.LeftAlignment ? Panel.rootObject.dockLeftSpaceForCenter : Panel.rootObject.dockRemainingSpaceForCenter)
 
     readonly property int appTitleSpacing: Math.max(10, Math.round(Panel.rootObject.dockItemMaxSize * 9 / 14) / 3)
-    property real remainingSpacesForSplitWindow: Panel.rootObject.dockLeftSpaceForCenter - (
-        (Panel.rootObject.dockCenterPartCount - 1) * (visualModel.cellWidth + appTitleSpacing) + (Panel.rootObject.dockCenterPartCount) * Panel.rootObject.dockPartSpacing)
+    property real remainingSpacesForSplitWindow: Panel.rootObject.adaptiveFashionMode ? 0 : Math.max(0, Panel.rootObject.dockLeftSpaceForCenter - (
+        (Panel.rootObject.dockCenterPartCount - 1) * (visualModel.cellWidth + appTitleSpacing) + (Panel.rootObject.dockCenterPartCount) * Panel.rootObject.dockPartSpacing))
     // 用于居中计算的实际应用区域尺寸
     property int appContainerWidth: useColumnLayout ? Panel.rootObject.dockSize : appContainer.implicitWidth
     property int appContainerHeight: useColumnLayout ? appContainer.implicitHeight : Panel.rootObject.dockSize
@@ -49,13 +52,23 @@ ContainmentItem {
         return -1
     }
 
+    function findDockElementIndex(dockElement) {
+        for (let i = 0; i < visualModel.items.count; i++) {
+            const item = visualModel.items.get(i)
+            if (item.model.dockElement === dockElement) {
+                return item.itemsIndex
+            }
+        }
+        return -1
+    }
+
     function blendColorAlpha(fallback) {
         var appearance = DS.applet("org.deepin.ds.dde-appearance")
         if (!appearance || appearance.opacity < 0)
             return fallback
         return appearance.opacity
     }
-    property real blendOpacity: blendColorAlpha(D.DTK.themeType === D.ApplicationHelper.DarkType ? 0.25 : 1.0)
+    property real blendOpacity: blendColorAlpha(Panel.colorTheme === Dock.Dark ? 0.25 : 1.0)
 
     TextCalculator {
         id: textCalculator
@@ -94,10 +107,13 @@ ContainmentItem {
                 required property bool active
                 required property bool attention
                 required property string itemId
+                required property string dockElement
+                required property string itemKind
                 required property string name
                 required property string title // winTitle
                 required property string iconName
                 required property string icon // winIconName
+                required property var previewIcons
                 required property string menus
                 required property list<string> windows
                 z: attention ? -1 : 0
@@ -182,8 +198,11 @@ ContainmentItem {
                         active: delegateRoot.active
                         attention: delegateRoot.attention
                         itemId: delegateRoot.itemId
+                        dockElement: delegateRoot.dockElement
+                        itemKind: delegateRoot.itemKind
                         name: delegateRoot.name
                         iconName: delegateRoot.iconName
+                        previewIcons: delegateRoot.previewIcons
                         menus: delegateRoot.menus
                         windows: delegateRoot.windows
                         visualIndex: delegateRoot.visualIndex
@@ -208,32 +227,197 @@ ContainmentItem {
             id: launcherDndDropArea
             anchors.fill: parent
             z: 3
-            keys: ["text/x-dde-dock-dnd-appid"]
             property string launcherDndDesktopId: ""
             property string launcherDndDragSource: ""
             property string launcherDndWinId: ""
+            property string pendingDockElement: ""
+            property string pendingFolderUrl: ""
 
             function resetDndState() {
                 launcherDndDesktopId = ""
                 launcherDndDragSource = ""
                 launcherDndWinId = ""
+                pendingDockElement = ""
+                pendingFolderUrl = ""
+            }
+
+            function dragString(drag, key) {
+                if (!drag || drag.getDataAsString === undefined || drag.getDataAsString === null) {
+                    return ""
+                }
+
+                const value = drag.getDataAsString(key)
+                if (value === undefined || value === null) {
+                    return ""
+                }
+                return String(value)
+            }
+
+            function urlsFromText(rawText) {
+                const text = rawText ? String(rawText).trim() : ""
+                if (text === "") {
+                    return []
+                }
+
+                return text.split(/[\r\n]+/).filter(function(entry) {
+                    return entry !== ""
+                })
+            }
+
+            function dragUrls(drag) {
+                const urls = drag.urls || []
+                if (urls.length > 0) {
+                    let result = []
+                    for (let i = 0; i < urls.length; ++i) {
+                        result.push(String(urls[i]))
+                    }
+                    return result
+                }
+
+                const treeUrls = urlsFromText(dragString(drag, "dfm_tree_urls_for_drag"))
+                if (treeUrls.length > 0) {
+                    return treeUrls
+                }
+
+                return urlsFromText(dragString(drag, "text/uri-list"))
+            }
+
+            function launcherDesktopIdFromDrag(drag) {
+                let desktopId = dragString(drag, "text/x-dde-dock-dnd-appid")
+                if (desktopId !== "") {
+                    return desktopId
+                }
+
+                desktopId = dragString(drag, "text/x-dde-launcher-dnd-desktopId")
+                if (desktopId !== "") {
+                    return desktopId
+                }
+
+                if (!drag.source) {
+                    return ""
+                }
+
+                if (drag.source.desktopId !== undefined && drag.source.desktopId !== null && drag.source.desktopId !== "") {
+                    return String(drag.source.desktopId)
+                }
+
+                if (drag.source.itemId !== undefined && drag.source.itemId !== null && drag.source.itemId !== "") {
+                    return String(drag.source.itemId)
+                }
+
+                if (drag.source.appId !== undefined && drag.source.appId !== null && drag.source.appId !== "") {
+                    return String(drag.source.appId)
+                }
+
+                return ""
+            }
+
+            function candidateFolderUrl(drag) {
+                const urls = dragUrls(drag)
+                if (urls.length !== 1) {
+                    return ""
+                }
+
+                const candidate = urls[0]
+                if (candidate.indexOf("file://") !== 0) {
+                    return ""
+                }
+
+                return candidate
+            }
+
+            function currentDragIndex() {
+                if (pendingDockElement === "") {
+                    return -1
+                }
+
+                if (taskmanager.Applet.windowSplit && pendingDockElement.indexOf("desktop/") === 0) {
+                    let appId = taskmanager.Applet.desktopIdToAppId(launcherDndDesktopId)
+                    if (launcherDndDragSource === "taskbar" && launcherDndWinId !== "") {
+                        return taskmanager.findAppIndexByWindow(appId, launcherDndWinId)
+                    }
+                    return taskmanager.findAppIndex(appId)
+                }
+
+                return taskmanager.findDockElementIndex(pendingDockElement)
+            }
+
+            function logDrag(prefix, drag, extra) {
+                console.warn(prefix,
+                             "source=", launcherDndDragSource,
+                             "desktopId=", launcherDndDesktopId,
+                             "dockElement=", pendingDockElement,
+                             "folderUrl=", pendingFolderUrl,
+                             "dockAppId=", dragString(drag, "text/x-dde-dock-dnd-appid"),
+                             "launcherDesktopId=", dragString(drag, "text/x-dde-launcher-dnd-desktopId"),
+                             "appType=", dragString(drag, "dfm_app_type_for_drag"),
+                             "treeUrls=", dragString(drag, "dfm_tree_urls_for_drag"),
+                             "uriList=", dragString(drag, "text/uri-list"),
+                             "urls=", JSON.stringify(dragUrls(drag)),
+                             extra || "")
             }
 
             onEntered: function(drag) {
-                let desktopId = drag.getDataAsString("text/x-dde-dock-dnd-appid")
-                launcherDndDragSource = drag.getDataAsString("text/x-dde-dock-dnd-source")
-                launcherDndWinId = drag.getDataAsString("text/x-dde-dock-dnd-winid")
-                launcherDndDesktopId = desktopId
-                if (launcherDndDragSource !== "taskbar" && taskmanager.Applet.requestDockByDesktopId(desktopId) === false) {
-                    resetDndState()
+                launcherDndDragSource = dragString(drag, "text/x-dde-dock-dnd-source")
+                launcherDndWinId = dragString(drag, "text/x-dde-dock-dnd-winid")
+                launcherDndDesktopId = launcherDesktopIdFromDrag(drag)
+                pendingDockElement = dragString(drag, "text/x-dde-dock-dnd-element")
+                pendingFolderUrl = ""
+
+                if (launcherDndDragSource === "" && launcherDndDesktopId !== "") {
+                    launcherDndDragSource = "launcher"
                 }
+
+                logDrag("taskmanager drag entered", drag)
+
+                if (launcherDndDragSource === "taskbar") {
+                    if (pendingDockElement === "" && launcherDndDesktopId !== "") {
+                        pendingDockElement = taskmanager.Applet.dockElementFromLauncherId(launcherDndDesktopId)
+                    }
+                    if (pendingDockElement === "") {
+                        drag.accepted = false
+                        resetDndState()
+                    } else {
+                        drag.accepted = true
+                    }
+                    return
+                }
+
+                if (launcherDndDesktopId !== "") {
+                    pendingDockElement = taskmanager.Applet.dockElementFromLauncherId(launcherDndDesktopId)
+                    if (pendingDockElement === "" || taskmanager.Applet.requestDockByDesktopId(launcherDndDesktopId) === false) {
+                        logDrag("taskmanager launcher drag rejected", drag)
+                        drag.accepted = false
+                        resetDndState()
+                    } else {
+                        drag.accepted = true
+                    }
+                    return
+                }
+
+                const folderUrl = candidateFolderUrl(drag)
+                if (folderUrl !== "") {
+                    pendingFolderUrl = folderUrl
+                    pendingDockElement = taskmanager.Applet.folderUrlToElementId(pendingFolderUrl)
+                    if (pendingDockElement === "" || taskmanager.Applet.requestDockByFolderUrl(pendingFolderUrl) === false) {
+                        logDrag("taskmanager folder drag rejected", drag)
+                        drag.accepted = false
+                        resetDndState()
+                    } else {
+                        drag.accepted = true
+                    }
+                    return
+                }
+
+                logDrag("taskmanager drag unsupported", drag)
+                drag.accepted = false
+                resetDndState()
             }
 
             onPositionChanged: function(drag) {
-                if (launcherDndDesktopId === "") return
+                if (pendingDockElement === "") return
                 let targetIndex = appContainer.indexAt(drag.x, drag.y)
-                let appId = taskmanager.Applet.desktopIdToAppId(launcherDndDesktopId)
-                let currentIndex = taskmanager.Applet.windowSplit ? taskmanager.findAppIndexByWindow(appId, launcherDndWinId) : taskmanager.findAppIndex(appId)
+                let currentIndex = currentDragIndex()
                 if (currentIndex !== -1 && targetIndex !== -1 && currentIndex !== targetIndex) {
                     if (taskmanager.Applet.windowSplit) {
                         taskmanager.Applet.moveItem(currentIndex, targetIndex)
@@ -244,11 +428,12 @@ ContainmentItem {
             }
 
             onDropped: function(drop) {
+                logDrag("taskmanager drag dropped", drop)
                 Panel.contextDragging = false
-                if (launcherDndDesktopId === "") return
+                if (pendingDockElement === "") return
+                drop.accepted = true
                 let targetIndex = appContainer.indexAt(drop.x, drop.y)
-                let appId = taskmanager.Applet.desktopIdToAppId(launcherDndDesktopId)
-                let currentIndex = taskmanager.Applet.windowSplit ? taskmanager.findAppIndexByWindow(appId, launcherDndWinId) : taskmanager.findAppIndex(appId)
+                let currentIndex = currentDragIndex()
                 if (currentIndex !== -1 && targetIndex !== -1 && currentIndex !== targetIndex) {
                     if (taskmanager.Applet.windowSplit) {
                         taskmanager.Applet.moveItem(currentIndex, targetIndex)
@@ -256,17 +441,21 @@ ContainmentItem {
                         visualModel.items.move(currentIndex, targetIndex)
                     }
                 }
-                let appIds = []
+                let dockElements = []
                 for (let i = 0; i < visualModel.items.count; i++) {
-                    appIds.push(visualModel.items.get(i).model.itemId)
+                    dockElements.push(visualModel.items.get(i).model.dockElement)
                 }
-                taskmanager.Applet.saveDockElementsOrder(appIds)
+                taskmanager.Applet.saveDockElementsOrder(dockElements)
                 resetDndState()
             }
 
-            onExited: function() {
+            onExited: function(drag) {
+                logDrag("taskmanager drag exited", drag)
                 if (launcherDndDesktopId !== "" && launcherDndDragSource !== "taskbar") {
                     taskmanager.Applet.requestUndockByDesktopId(launcherDndDesktopId)
+                }
+                if (pendingFolderUrl !== "" && launcherDndDragSource !== "taskbar") {
+                    taskmanager.Applet.requestUndockByFolderUrl(pendingFolderUrl)
                 }
                 resetDndState()
             }
@@ -275,6 +464,10 @@ ContainmentItem {
 
     Component.onCompleted: {
         Panel.rootObject.dockItemMaxSize = Qt.binding(function(){
+            if (Panel.rootObject.adaptiveFashionMode) {
+                return Panel.rootObject.dockSize
+            }
+
             return Math.min(Panel.rootObject.dockSize, Panel.rootObject.dockLeftSpaceForCenter * 1.2 / (Panel.rootObject.dockCenterPartCount - 1 + visualModel.count) - 2)
         })
     }

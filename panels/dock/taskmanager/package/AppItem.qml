@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+pragma ComponentBehavior: Bound
+
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 
@@ -17,8 +19,11 @@ Item {
     required property bool active
     required property bool attention
     required property string itemId
+    required property string dockElement
+    required property string itemKind
     required property string name
     required property string iconName
+    required property var previewIcons
     required property string menus
     required property list<string> windows
     required property int visualIndex
@@ -26,6 +31,7 @@ Item {
     required property string title
 
     property real blendOpacity: 1.0
+    property point lastSpotlightPoint: Qt.point(0, 0)
 
     signal dropFilesOnItem(itemId: string, files: list<string>)
     signal dragFinished()
@@ -35,7 +41,13 @@ Item {
     Drag.hotSpot.x: icon.width / 2
     Drag.hotSpot.y: icon.height / 2
     Drag.dragType: Drag.Automatic
-    Drag.mimeData: { "text/x-dde-dock-dnd-appid": itemId, "text/x-dde-dock-dnd-source": "taskbar", "text/x-dde-dock-dnd-winid": windows.length > 0 ? windows[0] : ""}
+    Drag.mimeData: {
+        "text/x-dde-dock-dnd-appid": itemId,
+        "text/x-dde-dock-dnd-element": dockElement,
+        "text/x-dde-dock-dnd-itemkind": itemKind,
+        "text/x-dde-dock-dnd-source": "taskbar",
+        "text/x-dde-dock-dnd-winid": windows.length > 0 ? windows[0] : ""
+    }
     
     property bool useColumnLayout: Panel.rootObject.useColumnLayout
     property int statusIndicatorSize: useColumnLayout ? root.width * 0.72 : root.height * 0.72
@@ -43,6 +55,7 @@ Item {
     property bool enableTitle: false
     property bool titleActive: enableTitle && titleLoader.active
     property int appTitleSpacing: 0
+    property bool popupItem: root.itemKind === "group" || root.itemKind === "folder"
     property var iconGlobalPoint: {
         var a = icon
         var x = 0, y = 0
@@ -56,6 +69,20 @@ Item {
     }
 
     implicitWidth: appItem.implicitWidth
+
+    function mapSpotlightPoint(localPoint) {
+        const point = localPoint || Qt.point(appItem.width / 2, appItem.height / 2)
+        return appItem.mapToItem(null, point.x, point.y)
+    }
+
+    function updateSpotlight(localPoint) {
+        lastSpotlightPoint = mapSpotlightPoint(localPoint)
+        Panel.reportMousePresence(true, lastSpotlightPoint)
+    }
+
+    function clearSpotlight() {
+        Panel.reportMousePresence(false, lastSpotlightPoint)
+    }
 
     // Monitor Panel position changes to update icon geometry
     Connections {
@@ -160,6 +187,7 @@ Item {
                 anchors.centerIn: parent
                 retainWhileLoading: true
                 smooth: false
+                visible: !root.popupItem
 
                 function mapToScene(px, py) {
                     return parent.mapToItem(Window.window.contentItem, Qt.point(px, py))
@@ -234,6 +262,17 @@ Item {
                     running: false
                 }
             }
+
+            PinnedItemIcon {
+                anchors.centerIn: parent
+                width: root.iconSize
+                height: root.iconSize
+                iconName: root.iconName
+                previewIcons: root.previewIcons
+                iconSize: root.iconSize
+                colorTheme: root.colorTheme
+                visible: root.popupItem
+            }
         }
 
         WindowIndicator {
@@ -298,6 +337,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             enabled: root.enableTitle && root.windows.length > 0
             text: root.title
+            colorTheme: root.colorTheme
         }
 
         // TODO: value can set during debugPanel
@@ -364,12 +404,35 @@ Item {
 
         HoverHandler {
             id: hoverHandler
+            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad | PointerDevice.Stylus
+
+            onPointChanged: {
+                if (hovered) {
+                    appItemSpotlightClearTimer.stop()
+                    root.updateSpotlight(hoverHandler.point.position)
+                }
+            }
+
             onHoveredChanged: function () {
                 if (hovered) {
+                    appItemSpotlightClearTimer.stop()
+                    root.updateSpotlight()
                     root.onEntered()
                 } else {
+                    appItemSpotlightClearTimer.restart()
                     root.onExited()
                 }
+            }
+        }
+    }
+
+    Timer {
+        id: appItemSpotlightClearTimer
+        interval: 70
+        repeat: false
+        onTriggered: {
+            if (!hoverHandler.hovered) {
+                root.clearSpotlight()
             }
         }
     }
@@ -380,21 +443,74 @@ Item {
         property bool trashEmpty: true
         sourceComponent: LP.Menu {
             id: contextMenu
+            property var menuItems: {
+                try {
+                    return JSON.parse(root.menus || "[]")
+                } catch (error) {
+                    console.warn("failed to parse taskmanager menu", error, root.menus)
+                    return []
+                }
+            }
             Instantiator {
                 id: menuItemInstantiator
-                model: JSON.parse(menus)
+                model: contextMenu.menuItems
                 delegate: LP.MenuItem {
-                    text: modelData.name
-                    enabled: (root.itemId === "dde-trash" && modelData.id === "clean-trash")
+                    required property var modelData
+
+                    readonly property string menuId: modelData && modelData.id !== undefined ? String(modelData.id) : ""
+                    readonly property string menuText: modelData && modelData.name !== undefined ? String(modelData.name) : ""
+
+                    text: menuText
+                    enabled: (root.itemId === "dde-trash" && menuId === "clean-trash")
                             ? !contextMenuLoader.trashEmpty
                             : true
                     onTriggered: {
-                        TaskManager.requestNewInstance(root.modelIndex, modelData.id);
+                        TaskManager.requestNewInstance(root.modelIndex, menuId);
                     }
                 }
                 onObjectAdded: (index, object) => contextMenu.insertItem(index, object)
                 onObjectRemoved: (index, object) => contextMenu.removeItem(object)
             }
+        }
+    }
+
+    PanelPopup {
+        id: pinnedPopup
+        property point popupAnchorPoint: Qt.point(0, 0)
+        width: pinnedPopupContent.width
+        height: pinnedPopupContent.height
+        popupX: {
+            switch (Panel.position) {
+            case Dock.Top:
+            case Dock.Bottom:
+                return popupAnchorPoint.x - pinnedPopup.width / 2
+            case Dock.Right:
+                return -pinnedPopup.width - 10
+            case Dock.Left:
+                return Panel.rootObject.dockSize + 10
+            }
+            return popupAnchorPoint.x - pinnedPopup.width / 2
+        }
+        popupY: {
+            switch (Panel.position) {
+            case Dock.Top:
+                return Panel.rootObject.dockSize + 10
+            case Dock.Right:
+            case Dock.Left:
+                return popupAnchorPoint.y - pinnedPopup.height / 2
+            case Dock.Bottom:
+                return -pinnedPopup.height - 10
+            }
+            return -pinnedPopup.height - 10
+        }
+
+        DockPinnedPopup {
+            id: pinnedPopupContent
+            applet: taskmanager.Applet
+            dockElement: root.dockElement
+            colorTheme: root.colorTheme
+            popupWindow: pinnedPopup.popupWindow
+            onCloseRequested: pinnedPopup.close()
         }
     }
 
@@ -418,6 +534,10 @@ Item {
         property int xOffset: 0
         property int yOffset: 0
         onTriggered: {
+            if (root.popupItem) {
+                return
+            }
+
             if (root.windows.length != 0 || Qt.platform.pluginName === "wayland") {
                 // 使用基于 modelIndex 的预览API，确保精确匹配
                 taskmanager.Applet.requestPreview(root.modelIndex, Panel.rootObject, xOffset, yOffset, Panel.position);
@@ -425,8 +545,26 @@ Item {
         }
     }
 
+    function togglePinnedPopup() {
+        if (pinnedPopup.popupVisible) {
+            pinnedPopup.close()
+            return
+        }
+
+        Panel.requestClosePopup()
+        pinnedPopupContent.beginPopupSession()
+        pinnedPopupContent.refresh("", false)
+        pinnedPopup.popupAnchorPoint = root.mapToItem(null, root.width / 2, root.height / 2)
+        pinnedPopup.open()
+    }
+
 
     function onEntered() {
+        if (root.popupItem) {
+            toolTipShowTimer.start()
+            return
+        }
+
         if (Qt.platform.pluginName === "xcb" && windows.length === 0) {
             toolTipShowTimer.start()
             return
@@ -455,7 +593,7 @@ Item {
             previewTimer.stop()
         }
 
-        if (Qt.platform.pluginName === "xcb" && windows.length === 0) {
+        if (root.popupItem || (Qt.platform.pluginName === "xcb" && windows.length === 0)) {
             toolTip.close()
             return
         }
@@ -463,6 +601,10 @@ Item {
     }
 
     function closeItemPreview() {
+        if (root.popupItem) {
+            return
+        }
+
         if (previewTimer.running) {
             previewTimer.stop()
         } else {
@@ -497,6 +639,7 @@ Item {
                 appItem.grabToImage(function(result) {
                     root.Drag.imageSource = result.url;
                 })
+                appItemSpotlightClearTimer.stop()
             }
             toolTip.close()
             closeItemPreview()
@@ -512,6 +655,11 @@ Item {
             if (mouse.button === Qt.RightButton) {
                 requestAppItemMenu()
             } else {
+                if (root.popupItem) {
+                    togglePinnedPopup()
+                    return
+                }
+
                 if (root.windows.length === 0) {
                     launchAnimation.start();
                     TaskManager.requestNewInstance(index, "");
@@ -577,6 +725,9 @@ Item {
         }
 
         onDropped: function (drop){
+            if (root.popupItem) {
+                return
+            }
             dragToolTipCloseTimer.stop()
             dragToolTip.close()
             root.dropFilesOnItem(root.itemId, drop.urls)
@@ -594,4 +745,5 @@ Item {
     onIconGlobalPointChanged: {
         updateWindowIconGeometryTimer.start()
     }
+
 }

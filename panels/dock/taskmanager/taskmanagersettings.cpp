@@ -171,6 +171,10 @@ void TaskManagerSettings::toggleDockedElement(const QString &element)
 
 void TaskManagerSettings::appendDockedElement(const QString &element)
 {
+    if (m_dockedElements.contains(element)) {
+        return;
+    }
+
     m_dockedElements.append(element);
     Q_EMIT dockedElementsChanged();
     saveDockedElements();
