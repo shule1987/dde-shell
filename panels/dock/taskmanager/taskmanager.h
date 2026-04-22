@@ -11,8 +11,10 @@
 #include "dockglobalelementmodel.h"
 #include "dockitemmodel.h"
 #include "hoverpreviewproxymodel.h"
+#include "popupsortutils.h"
 
 #include <QAbstractItemModel>
+#include <QHash>
 #include <QPointer>
 #include <QVariantMap>
 
@@ -91,7 +93,11 @@ public:
     Q_INVOKABLE void requestClose(const QModelIndex &index, bool force = false) const override;
     Q_INVOKABLE void requestUpdateWindowIconGeometry(const QModelIndex &index, const QRect &geometry, QObject *delegate = nullptr) const override;
     Q_INVOKABLE void
-    requestPreview(const QModelIndex &index, QObject *relativePositionItem, int32_t previewXoffset, int32_t previewYoffset, uint32_t direction);
+    requestPreview(const QModelIndex &index,
+                   QObject *relativePositionItem,
+                   int32_t previewXoffset,
+                   int32_t previewYoffset,
+                   uint32_t direction);
     Q_INVOKABLE void requestWindowsView(const QModelIndexList &indexes) const override;
 
     Q_INVOKABLE QString desktopIdToAppId(const QString& desktopId) const;
@@ -102,6 +108,8 @@ public:
     Q_INVOKABLE bool requestDockByFolderUrl(const QString &folderUrl);
     Q_INVOKABLE bool requestUndockByFolderUrl(const QString &folderUrl);
     Q_INVOKABLE QVariantMap popupDescriptor(const QString &dockElement, const QString &location = QString()) const;
+    Q_INVOKABLE QVariantMap popupSortState(const QString &dockElement) const;
+    Q_INVOKABLE QVariantMap cyclePopupSort(const QString &dockElement, const QString &fieldName);
     Q_INVOKABLE void activatePopupEntry(const QString &dockElement, const QString &entryId) const;
     Q_INVOKABLE bool RequestDock(QString appID);
     Q_INVOKABLE bool IsDocked(QString appID);
@@ -121,6 +129,7 @@ Q_SIGNALS:
     void windowSplitChanged();
     void windowFullscreenChanged(bool);
     void allowedForceQuitChanged();
+    void popupEntryThumbnailChanged(const QString &entryPath);
 
 private Q_SLOTS:
     void handleWindowAdded(QPointer<AbstractWindow> window);
@@ -135,6 +144,7 @@ private:
     HoverPreviewProxyModel *m_hoverPreviewModel = nullptr;
     QAbstractItemModel *m_launcherAppModel = nullptr;
     QAbstractItemModel *m_launcherGroupModel = nullptr;
+    QHash<QString, PopupSortState> m_popupSortStates;
     int queryTrashCount() const;
 };
 

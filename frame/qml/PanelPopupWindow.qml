@@ -13,10 +13,13 @@ PopupWindow {
 
     property real xOffset: 0
     property real yOffset: 0
+    property real positionXOffset: xOffset
+    property real positionYOffset: yOffset
     property int margins: 10
     property int windowThemeType: D.ApplicationHelper.LightType
     readonly property bool darkTheme: root.windowThemeType === D.ApplicationHelper.DarkType
     property Item currentItem
+    property bool geometryUpdatePending: false
     signal requestUpdateGeometry()
     signal updateGeometryFinished()
 
@@ -34,8 +37,8 @@ PopupWindow {
 
         let bounding = Qt.rect(root.screen.virtualX + margins, root.screen.virtualY + margins,
                                root.screen.width - margins * 2, root.screen.height - margins * 2)
-        let pos = Qt.point(transientParent ? transientParent.x + xOffset : xOffset,
-                           transientParent ? transientParent.y + yOffset : YOffset)
+        let pos = Qt.point(transientParent ? transientParent.x + positionXOffset : positionXOffset,
+                           transientParent ? transientParent.y + positionYOffset : positionYOffset)
         x = selectValue(pos.x, bounding.left, bounding.right - root.width)
         y = selectValue(pos.y, bounding.top, bounding.bottom - root.height)
     }
@@ -122,12 +125,18 @@ PopupWindow {
 
     onHeightChanged: requestUpdateGeometry()
     onWidthChanged: requestUpdateGeometry()
-    onXOffsetChanged: requestUpdateGeometry()
-    onYOffsetChanged: requestUpdateGeometry()
+    onPositionXOffsetChanged: requestUpdateGeometry()
+    onPositionYOffsetChanged: requestUpdateGeometry()
 
     onRequestUpdateGeometry: {
         if (updateGeometryer) {
+            if (geometryUpdatePending) {
+                return
+            }
+
+            geometryUpdatePending = true
             Qt.callLater(function () {
+                geometryUpdatePending = false
                 updateGeometryer()
                 updateGeometryFinished()
             })
