@@ -1,3 +1,9 @@
+dde-shell (2.0.37) unstable; urgency=medium
+
+  * feat: refine dock launchpad, task items, and fashion left plugins
+
+ -- shule1987 <shule1987@qq.com>  Thu, 23 Apr 2026 13:55:59 +0800
+
 dde-shell (2.0.36) unstable; urgency=medium
 
   * fix: prevent position fix during drag or animation

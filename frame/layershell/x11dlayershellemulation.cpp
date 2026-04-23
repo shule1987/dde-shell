@@ -29,6 +29,12 @@ LayerShellEmulation::LayerShellEmulation(QWindow* window, QObject *parent)
 {
     onLayerChanged();
     connect(m_dlayerShellWindow, &DLayerShellWindow::layerChanged, this, &LayerShellEmulation::onLayerChanged);
+    connect(m_window, &QWindow::visibleChanged, this, [this](bool) {
+        onLayerChanged();
+    });
+    connect(m_window, &QWindow::visibilityChanged, this, [this](QWindow::Visibility) {
+        onLayerChanged();
+    });
 
     onPositionChanged();
     connect(m_dlayerShellWindow, &DLayerShellWindow::anchorsChanged, this, &LayerShellEmulation::onPositionChanged);
@@ -85,6 +91,10 @@ LayerShellEmulation::LayerShellEmulation(QWindow* window, QObject *parent)
 void LayerShellEmulation::onLayerChanged()
 {
     auto xcbWindow = dynamic_cast<QNativeInterface::Private::QXcbWindow*>(m_window->handle());
+    if (!xcbWindow) {
+        return;
+    }
+
     switch (m_dlayerShellWindow->layer()) {
         case DLayerShellWindow::LayerBackground: {
             m_window->setFlags(m_window->flags() & ~Qt::WindowStaysOnBottomHint);
@@ -151,6 +161,7 @@ void LayerShellEmulation::onPositionChanged()
     }
 
     m_window->setGeometry(rect);
+    onLayerChanged();
 }
 
 /**
