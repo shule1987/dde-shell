@@ -14,8 +14,11 @@
 #include "popupsortutils.h"
 
 #include <QAbstractItemModel>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QPointer>
+#include <QProcess>
+#include <QSet>
 #include <QVariantMap>
 
 namespace dock {
@@ -29,6 +32,8 @@ class TaskManager : public DS_NAMESPACE::DContainment, public AbstractTaskManage
     Q_PROPERTY(bool windowSplit READ windowSplit NOTIFY windowSplitChanged)
     Q_PROPERTY(bool windowFullscreen READ windowFullscreen NOTIFY windowFullscreenChanged)
     Q_PROPERTY(bool allowForceQuit READ allowForceQuit NOTIFY allowedForceQuitChanged)
+    Q_PROPERTY(QString trashTipText READ getTrashTipText NOTIFY trashStateChanged)
+    Q_PROPERTY(bool trashEmpty READ isTrashEmpty NOTIFY trashStateChanged)
 
 public:
     enum Roles {
@@ -125,18 +130,28 @@ public:
     Q_INVOKABLE QString getTrashTipText();
 
     Q_INVOKABLE bool isTrashEmpty() const;
+    Q_INVOKABLE QString createManagedTempFilePath(const QString &prefix = QString(),
+                                                  const QString &suffix = QString()) const;
+    Q_INVOKABLE void releaseManagedTempFile(const QString &pathOrUrl) const;
 Q_SIGNALS:
     void dataModelChanged();
     void windowSplitChanged();
     void windowFullscreenChanged(bool);
     void allowedForceQuitChanged();
     void popupEntryThumbnailChanged(const QString &entryPath);
+    void trashStateChanged();
 
 private Q_SLOTS:
     void handleWindowAdded(QPointer<AbstractWindow> window);
     void modifyOpacityChanged();
 
 private:
+    void refreshTrashCount(bool force = false) const;
+    static int trashCountFromOutput(const QByteArray &output);
+    static QString managedTempDirectoryPath();
+    static QString normalizedManagedTempFilePath(const QString &pathOrUrl);
+    void pruneManagedTempFiles() const;
+
     QScopedPointer<AbstractWindowMonitor> m_windowMonitor;
     bool m_windowFullscreen;
     DockCombineModel *m_activeAppModel = nullptr;
@@ -146,7 +161,12 @@ private:
     QAbstractItemModel *m_launcherAppModel = nullptr;
     QAbstractItemModel *m_launcherGroupModel = nullptr;
     QHash<QString, PopupSortState> m_popupSortStates;
-    int queryTrashCount() const;
+    mutable QProcess *m_trashCountProcess = nullptr;
+    mutable int m_cachedTrashCount = 0;
+    mutable bool m_trashStateInitialized = false;
+    mutable QElapsedTimer m_trashCountRefreshTimer;
+    mutable QSet<QString> m_managedTempFiles;
+    mutable qint64 m_lastManagedTempPruneMs = 0;
 };
 
 }
