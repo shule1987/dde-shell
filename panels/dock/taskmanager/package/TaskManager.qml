@@ -496,16 +496,15 @@ ContainmentItem {
                 Repeater {
                     model: overflowFooter.previewCount
 
-                    D.DciIcon {
+                    TaskIcon {
                         required property int index
 
                         readonly property int previewIndex: overflowFooter.previewStartIndex + index
                         readonly property var previewItem: taskmanager.adaptiveFashionOverflowItems[previewIndex]
 
-                        name: previewItem && previewItem.iconName ? previewItem.iconName : ""
+                        iconName: previewItem && previewItem.iconName ? previewItem.iconName : ""
                         width: overflowFooter.stackedIconSize
                         height: overflowFooter.stackedIconSize
-                        sourceSize: Qt.size(width, height)
                         smooth: false
                         retainWhileLoading: true
                         x: index * overflowFooter.stackXOffset

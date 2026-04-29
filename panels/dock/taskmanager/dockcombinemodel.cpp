@@ -55,10 +55,11 @@ QVariant DockCombineModel::data(const QModelIndex &index, int role) const
         return res;
     }
     case TaskManager::IconNameRole: {
-        QString winTitle = RoleCombineModel::data(index, m_roleMaps.value(TaskManager::WinIconRole)).toString();
+        const QString windowIcon = RoleCombineModel::data(index, m_roleMaps.value(TaskManager::WinIconRole)).toString();
         auto icon = RoleCombineModel::data(index, m_roleMaps.value(TaskManager::IconNameRole)).toString();
-        if (icon.isEmpty()) {
-            icon = RoleCombineModel::data(index, m_roleMaps.value(TaskManager::WinIconRole)).toString();
+        if ((icon.isEmpty() || icon == QLatin1String(DEFAULT_APP_ICONNAME))
+            && !windowIcon.isEmpty()) {
+            icon = windowIcon;
         }
         return icon;
     }

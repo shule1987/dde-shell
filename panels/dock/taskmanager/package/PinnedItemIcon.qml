@@ -66,13 +66,12 @@ Item {
 
             Repeater {
                 model: root.useCompositePreview ? root.visiblePreviewIcons : 0
-                delegate: D.DciIcon {
+                delegate: TaskIcon {
                     required property string modelData
 
-                    name: modelData
+                    iconName: modelData
                     width: root.compositeIconSize
                     height: root.compositeIconSize
-                    sourceSize: Qt.size(width, height)
                     smooth: false
                     retainWhileLoading: true
                 }
@@ -80,12 +79,11 @@ Item {
         }
     }
 
-    D.DciIcon {
+    TaskIcon {
         anchors.centerIn: parent
         width: root.iconSize
         height: root.iconSize
-        sourceSize: Qt.size(width, height)
-        name: root.visiblePreviewIcons.length === 1 ? root.visiblePreviewIcons[0] : root.iconName
+        iconName: root.visiblePreviewIcons.length === 1 ? root.visiblePreviewIcons[0] : root.iconName
         visible: !root.useCompositePreview
         smooth: false
         retainWhileLoading: true

@@ -19,6 +19,26 @@
 Q_LOGGING_CATEGORY(appitemLog, "org.deepin.dde.shell.dock.taskmanger.appitem")
 
 namespace dock {
+namespace {
+QString desktopIconName(const QSharedPointer<DesktopfileAbstractParser> &parser)
+{
+    if (!parser || !parser->isValied().first) {
+        return {};
+    }
+
+    return parser->desktopIcon().trimmed();
+}
+
+QString windowIconName(const QPointer<AbstractWindow> &window)
+{
+    if (window.isNull()) {
+        return {};
+    }
+
+    return window->icon().trimmed();
+}
+}
+
 AppItem::AppItem(QString id, QObject *parent)
     : AbstractItem(QStringLiteral("AppItem/%1").arg(escapeToObjectPath(id)), parent)
     , m_id(id)
@@ -52,21 +72,17 @@ QString AppItem::type() const
 
 QString AppItem::icon() const
 {
-    if (!m_currentActiveWindow.isNull()) {
-        const QString windowIcon = m_currentActiveWindow->icon().trimmed();
-        if (!windowIcon.isEmpty()) {
-            return windowIcon;
-        }
+    const QString windowIcon = windowIconName(m_currentActiveWindow);
+    if (!windowIcon.isEmpty()) {
+        return windowIcon;
     }
 
-    if (m_desktopfileParser && m_desktopfileParser->isValied().first) {
-        const QString desktopIcon = m_desktopfileParser->desktopIcon().trimmed();
-        if (!desktopIcon.isEmpty()) {
-            return desktopIcon;
-        }
+    const QString desktopIcon = desktopIconName(m_desktopfileParser);
+    if (!desktopIcon.isEmpty()) {
+        return desktopIcon;
     }
 
-    return QStringLiteral("application-default-icon");
+    return QString::fromLatin1(DEFAULT_APP_ICONNAME);
 }
 
 QString AppItem::name() const
@@ -316,7 +332,12 @@ QString AppItem::getCurrentActiveWindowName() const
 
 QString AppItem::getCurrentActiveWindowIcon() const
 {
-    return m_currentActiveWindow.isNull() ? this->icon() : m_currentActiveWindow->icon();
+    const QString windowIcon = windowIconName(m_currentActiveWindow);
+    if (!windowIcon.isEmpty()) {
+        return windowIcon;
+    }
+
+    return icon();
 }
 
 void AppItem::updateCurrentActiveWindow(QPointer<AbstractWindow> window)

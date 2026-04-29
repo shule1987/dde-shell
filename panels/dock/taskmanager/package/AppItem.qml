@@ -284,12 +284,11 @@ Item {
                 target: Panel
             }
 
-            D.DciIcon {
+            TaskIcon {
                 id: icon
-                name: root.iconName
+                iconName: root.iconName
                 height: iconSize
                 width: iconSize
-                sourceSize: Qt.size(iconSize, iconSize)
                 anchors.centerIn: parent
                 retainWhileLoading: true
                 smooth: false

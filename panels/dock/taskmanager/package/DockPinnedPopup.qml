@@ -1164,12 +1164,11 @@ FocusScope {
                                             visible: gridButton.thumbnailReady
                                         }
 
-                                        D.DciIcon {
+                                        TaskIcon {
                                             anchors.centerIn: parent
                                             width: root.itemIconSize
                                             height: root.itemIconSize
-                                            sourceSize: Qt.size(width, height)
-                                            name: modelData.iconName
+                                            iconName: modelData.iconName
                                             smooth: false
                                             retainWhileLoading: true
                                             visible: !gridButton.thumbnailReady
@@ -1293,12 +1292,11 @@ FocusScope {
                                             visible: gridButton.thumbnailAvailable && dragThumbnailImage.status === Image.Ready
                                         }
 
-                                        D.DciIcon {
+                                        TaskIcon {
                                             anchors.centerIn: parent
                                             width: root.itemIconSize
                                             height: root.itemIconSize
-                                            sourceSize: Qt.size(width, height)
-                                            name: gridButton.modelData && gridButton.modelData.iconName ? String(gridButton.modelData.iconName) : ""
+                                            iconName: gridButton.modelData && gridButton.modelData.iconName ? String(gridButton.modelData.iconName) : ""
                                             visible: !gridButton.thumbnailAvailable || dragThumbnailImage.status !== Image.Ready
                                             smooth: false
                                             retainWhileLoading: true
