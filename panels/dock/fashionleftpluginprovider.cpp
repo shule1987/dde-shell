@@ -2822,9 +2822,11 @@ void FashionLeftPluginProvider::openWeatherPopup(int taskbarLeft, int taskbarTop
 
 void FashionLeftPluginProvider::openMailClient()
 {
-    refreshMailState();
     if (!m_mailConfigured) {
-        return;
+        auto *sessionBusInterface = QDBusConnection::sessionBus().interface();
+        if (sessionBusInterface && sessionBusInterface->isServiceRegistered(MailService)) {
+            refreshMailState();
+        }
     }
 
     refreshMailClient();
@@ -3122,6 +3124,17 @@ void FashionLeftPluginProvider::refreshNotificationCount()
 
 void FashionLeftPluginProvider::refreshMailState()
 {
+    auto *sessionBusInterface = QDBusConnection::sessionBus().interface();
+    if (!sessionBusInterface || !sessionBusInterface->isServiceRegistered(MailService)) {
+        if (m_mailConfigured || m_mailUnreadCount != 0 || m_mailSummaryText != QStringLiteral("邮箱信息不可用")) {
+            m_mailConfigured = false;
+            m_mailUnreadCount = 0;
+            m_mailSummaryText = QStringLiteral("邮箱信息不可用");
+            emit mailStateChanged();
+        }
+        return;
+    }
+
     QDBusInterface mailInterface(MailService,
                                  MailPath,
                                  MailInterface,
@@ -3252,10 +3265,17 @@ void FashionLeftPluginProvider::refreshSystemStats()
 
         m_previousCpuTotalTime = totalCpuTime;
         m_previousCpuIdleTime = idleCpuTime;
+    } else {
+        querySystemMonitorUsage("getCpuUsage", &nextCpuUsage);
     }
 
     int nextMemoryUsage = systemMemoryUsagePercent();
-    querySystemMonitorUsage("getMemoryUsage", &nextMemoryUsage);
+    // Prefer direct kernel counters. The daemon can expose stale placeholder values
+    // before it has refreshed its own cache.
+    if (nextMemoryUsage < 0) {
+        nextMemoryUsage = m_memoryUsage;
+        querySystemMonitorUsage("getMemoryUsage", &nextMemoryUsage);
+    }
 
     const QStringList activeInterfaces = preferredNetworkInterfaces();
     const quint64 receiveBytes = totalInterfaceBytes(true, activeInterfaces);
@@ -4148,6 +4168,12 @@ bool FashionLeftPluginProvider::readCpuTimes(quint64 *totalTime, quint64 *idleTi
     for (qsizetype index = 1; index < fields.size(); ++index) {
         total += fields.at(index).toULongLong();
     }
+    if (fields.size() > 9) {
+        total -= fields.at(9).toULongLong();
+    }
+    if (fields.size() > 10) {
+        total -= fields.at(10).toULongLong();
+    }
 
     const quint64 idle = fields.value(4).toULongLong() + fields.value(5).toULongLong();
     *totalTime = total;
@@ -4159,17 +4185,37 @@ int FashionLeftPluginProvider::systemMemoryUsagePercent()
 {
     QFile file(QStringLiteral("/proc/meminfo"));
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        return 0;
+        return -1;
     }
 
     quint64 totalMemory = 0;
     quint64 availableMemory = 0;
-    while (!file.atEnd()) {
-        const QString line = QString::fromUtf8(file.readLine());
+    quint64 freeMemory = 0;
+    quint64 bufferMemory = 0;
+    quint64 cachedMemory = 0;
+    quint64 reclaimableMemory = 0;
+    quint64 shmemMemory = 0;
+    while (true) {
+        const QByteArray rawLine = file.readLine();
+        if (rawLine.isEmpty()) {
+            break;
+        }
+
+        const QString line = QString::fromUtf8(rawLine);
         if (line.startsWith(QStringLiteral("MemTotal:"))) {
             totalMemory = line.section(QLatin1Char(':'), 1).simplified().section(QLatin1Char(' '), 0, 0).toULongLong();
         } else if (line.startsWith(QStringLiteral("MemAvailable:"))) {
             availableMemory = line.section(QLatin1Char(':'), 1).simplified().section(QLatin1Char(' '), 0, 0).toULongLong();
+        } else if (line.startsWith(QStringLiteral("MemFree:"))) {
+            freeMemory = line.section(QLatin1Char(':'), 1).simplified().section(QLatin1Char(' '), 0, 0).toULongLong();
+        } else if (line.startsWith(QStringLiteral("Buffers:"))) {
+            bufferMemory = line.section(QLatin1Char(':'), 1).simplified().section(QLatin1Char(' '), 0, 0).toULongLong();
+        } else if (line.startsWith(QStringLiteral("Cached:"))) {
+            cachedMemory = line.section(QLatin1Char(':'), 1).simplified().section(QLatin1Char(' '), 0, 0).toULongLong();
+        } else if (line.startsWith(QStringLiteral("SReclaimable:"))) {
+            reclaimableMemory = line.section(QLatin1Char(':'), 1).simplified().section(QLatin1Char(' '), 0, 0).toULongLong();
+        } else if (line.startsWith(QStringLiteral("Shmem:"))) {
+            shmemMemory = line.section(QLatin1Char(':'), 1).simplified().section(QLatin1Char(' '), 0, 0).toULongLong();
         }
 
         if (totalMemory > 0 && availableMemory > 0) {
@@ -4177,8 +4223,15 @@ int FashionLeftPluginProvider::systemMemoryUsagePercent()
         }
     }
 
+    if (availableMemory == 0 && totalMemory > 0) {
+        const quint64 estimatedAvailableMemory = freeMemory + bufferMemory + cachedMemory + reclaimableMemory;
+        availableMemory = estimatedAvailableMemory > shmemMemory
+            ? (estimatedAvailableMemory - shmemMemory)
+            : 0;
+    }
+
     if (totalMemory == 0) {
-        return 0;
+        return -1;
     }
 
     const quint64 usedMemory = totalMemory > availableMemory ? (totalMemory - availableMemory) : 0;

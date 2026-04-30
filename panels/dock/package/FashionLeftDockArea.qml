@@ -82,7 +82,7 @@ Control {
     readonly property color aiIconTintColor: Panel.colorTheme === Dock.Dark ? Qt.rgba(1, 1, 1, 0.92) : Qt.rgba(0, 0, 0, 0.86)
     readonly property int weatherTextSpacing: root.tightSpacing - 2
     readonly property bool musicPageVisible: provider.musicAvailable
-    readonly property bool mailPageVisible: provider.mailConfigured
+    readonly property bool mailPageVisible: true
     readonly property bool aiPageVisible: provider.aiRunningCount > 0 && aiEntries.length > 0
     readonly property var pageIds: {
         const ids = ["weather"]
@@ -586,19 +586,7 @@ Control {
             return
         }
 
-        const fallbackPageId = root.normalizedPageId(root.mailAutoActive ? root.mailReturnPageId : root.manualPageId)
-        if (root.currentPageId === "mail"
-                || root.transitionFromPageId === "mail"
-                || root.transitionToPageId === "mail") {
-            root.showPage(fallbackPageId, false)
-        }
-
-        if (root.manualPageId === "mail") {
-            root.manualPageId = "weather"
-        }
-
         root.mailAutoActive = false
-        root.previousMailUnreadCount = provider.mailUnreadCount
     }
 
     function completeMailAutoFocus() {
