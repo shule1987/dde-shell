@@ -42,6 +42,7 @@ class DockPanel : public DS_NAMESPACE::DPanel, public QDBusContext
     Q_PROPERTY(qreal devicePixelRatio READ devicePixelRatio NOTIFY devicePixelRatioChanged FINAL)
 
     Q_PROPERTY(bool debugMode READ debugMode FINAL CONSTANT)
+    Q_PROPERTY(bool launcherShown READ launcherShown NOTIFY launcherShownChanged FINAL)
 
     Q_PROPERTY(bool contextDragging READ contextDragging WRITE setContextDragging NOTIFY contextDraggingChanged FINAL)
     Q_PROPERTY(bool containsMouse READ containsMouse NOTIFY containsMouseChanged FINAL)
@@ -87,6 +88,7 @@ public:
     void setCompositorReady(bool ready);
 
     bool debugMode() const;
+    bool launcherShown() const;
 
     Q_INVOKABLE void openDockSettings() const;
 
@@ -149,6 +151,7 @@ Q_SIGNALS:
     void leftEdgeClicked(const QString &minOrder);
     void devicePixelRatioChanged(qreal ratio);
     void lockedChanged(bool locked);
+    void launcherShownChanged(bool shown);
 
     void contextDraggingChanged();
     void containsMouseChanged(bool containsMouse);
@@ -164,8 +167,6 @@ private:
     bool m_compositorReady;
     bool m_launcherShown;
     QTimer *m_themeSyncTimer;
-    QTimer *m_launcherRaiseTimer;
-    int m_launcherRaisePasses;
     bool m_contextDragging;
     bool m_containsMouse;
     bool m_reportedContainsMouse;
