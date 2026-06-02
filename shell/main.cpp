@@ -5,8 +5,10 @@
 #include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
-#include <QDBusInterface>
+#include <QDBusConnectionInterface>
+#include <QDBusMessage>
 #include <QDBusReply>
+#include <QDBusServiceWatcher>
 #include <QDBusVariant>
 #include <QEvent>
 #include <QIcon>
@@ -55,46 +57,48 @@ static void disableLogOutput()
     QLoggingCategory::setFilterRules("*.debug=false");
 }
 
-static QString readAppearanceStringProperty(const QString &propertyName)
-{
-    static constexpr auto kAppearanceService = "org.deepin.dde.Appearance1";
-    static constexpr auto kAppearancePath = "/org/deepin/dde/Appearance1";
-    static constexpr auto kAppearanceInterface = "org.deepin.dde.Appearance1";
-    static constexpr auto kPropertiesInterface = "org.freedesktop.DBus.Properties";
+namespace {
+constexpr auto kAppearanceService = "org.deepin.dde.Appearance1";
+constexpr auto kAppearancePath = "/org/deepin/dde/Appearance1";
+constexpr auto kAppearanceInterface = "org.deepin.dde.Appearance1";
+constexpr auto kPropertiesInterface = "org.freedesktop.DBus.Properties";
+constexpr int kAppearancePropertyCallTimeoutMs = 300;
 
-    QDBusInterface appearanceProperties(QString::fromLatin1(kAppearanceService),
-                                        QString::fromLatin1(kAppearancePath),
-                                        QString::fromLatin1(kPropertiesInterface),
-                                        QDBusConnection::sessionBus());
-    if (!appearanceProperties.isValid()) {
-        return QString();
+static bool isAppearanceServiceRegistered()
+{
+    auto *interface = QDBusConnection::sessionBus().interface();
+    return interface && interface->isServiceRegistered(QString::fromLatin1(kAppearanceService));
+}
+
+static QVariant readAppearanceProperty(const QString &propertyName)
+{
+    if (!isAppearanceServiceRegistered()) {
+        return QVariant();
     }
 
-    const QDBusReply<QDBusVariant> reply = appearanceProperties.call(QStringLiteral("Get"),
-                                                                     QString::fromLatin1(kAppearanceInterface),
-                                                                     propertyName);
-    return reply.isValid() ? reply.value().variant().toString() : QString();
+    QDBusMessage message = QDBusMessage::createMethodCall(QString::fromLatin1(kAppearanceService),
+                                                          QString::fromLatin1(kAppearancePath),
+                                                          QString::fromLatin1(kPropertiesInterface),
+                                                          QStringLiteral("Get"));
+    message.setAutoStartService(false);
+    message << QString::fromLatin1(kAppearanceInterface) << propertyName;
+
+    const QDBusMessage replyMessage = QDBusConnection::sessionBus().call(message,
+                                                                         QDBus::BlockWithGui,
+                                                                         kAppearancePropertyCallTimeoutMs);
+    const QDBusReply<QDBusVariant> reply(replyMessage);
+    return reply.isValid() ? reply.value().variant() : QVariant();
+}
+
+static QString readAppearanceStringProperty(const QString &propertyName)
+{
+    return readAppearanceProperty(propertyName).toString();
 }
 
 static double readAppearanceDoubleProperty(const QString &propertyName)
 {
-    static constexpr auto kAppearanceService = "org.deepin.dde.Appearance1";
-    static constexpr auto kAppearancePath = "/org/deepin/dde/Appearance1";
-    static constexpr auto kAppearanceInterface = "org.deepin.dde.Appearance1";
-    static constexpr auto kPropertiesInterface = "org.freedesktop.DBus.Properties";
-
-    QDBusInterface appearanceProperties(QString::fromLatin1(kAppearanceService),
-                                        QString::fromLatin1(kAppearancePath),
-                                        QString::fromLatin1(kPropertiesInterface),
-                                        QDBusConnection::sessionBus());
-    if (!appearanceProperties.isValid()) {
-        return 0.0;
-    }
-
-    const QDBusReply<QDBusVariant> reply = appearanceProperties.call(QStringLiteral("Get"),
-                                                                     QString::fromLatin1(kAppearanceInterface),
-                                                                     propertyName);
-    return reply.isValid() ? reply.value().variant().toDouble() : 0.0;
+    return readAppearanceProperty(propertyName).toDouble();
+}
 }
 
 static DGuiApplicationHelper::ColorType explicitThemeTypeFromName(const QString &themeName)
@@ -166,7 +170,7 @@ static DGuiApplicationHelper::ColorType effectiveThemeTypeFromAppearance(const Q
 static void syncApplicationThemeFromAppearance()
 {
     auto *guiHelper = DGuiApplicationHelper::instance();
-    if (!guiHelper) {
+    if (!guiHelper || !isAppearanceServiceRegistered()) {
         return;
     }
 
@@ -333,18 +337,34 @@ public:
         : QObject(parent)
         , m_menuThemeSync(menuThemeSync)
     {
+        auto *watcher = new QDBusServiceWatcher(QString::fromLatin1(kAppearanceService),
+                                                QDBusConnection::sessionBus(),
+                                                QDBusServiceWatcher::WatchForOwnerChange,
+                                                this);
+        QObject::connect(watcher, &QDBusServiceWatcher::serviceRegistered,
+                         this, [this](const QString &service) {
+            if (service != QString::fromLatin1(kAppearanceService)) {
+                return;
+            }
+            m_appearanceAvailable = true;
+            scheduleSync();
+        });
+        QObject::connect(watcher, &QDBusServiceWatcher::serviceUnregistered,
+                         this, [this](const QString &service) {
+            if (service == QString::fromLatin1(kAppearanceService)) {
+                m_appearanceAvailable = false;
+            }
+        });
+
         m_syncTimer.setSingleShot(true);
         m_syncTimer.setInterval(80);
         QObject::connect(&m_syncTimer, &QTimer::timeout,
-                         this, &AppearanceThemeSync::refreshAppearanceState);
-
-        m_pollTimer.setInterval(500);
-        QObject::connect(&m_pollTimer, &QTimer::timeout,
                          this, &AppearanceThemeSync::refreshAppearanceState);
     }
 
     void install()
     {
+        m_appearanceAvailable = isAppearanceServiceRegistered();
         auto bus = QDBusConnection::sessionBus();
         bus.connect(QStringLiteral("org.deepin.dde.Appearance1"),
                     QStringLiteral("/org/deepin/dde/Appearance1"),
@@ -366,8 +386,9 @@ public:
                     this,
                     SLOT(onAppearancePropertiesChanged(QString,QVariantMap,QStringList)));
 
-        refreshAppearanceState();
-        m_pollTimer.start();
+        if (m_appearanceAvailable) {
+            refreshAppearanceState();
+        }
     }
 
 private Q_SLOTS:
@@ -394,6 +415,11 @@ private Q_SLOTS:
 
     void refreshAppearanceState()
     {
+        if (!m_appearanceAvailable && !isAppearanceServiceRegistered()) {
+            return;
+        }
+        m_appearanceAvailable = true;
+
         const QString globalThemeName = readAppearanceStringProperty(QStringLiteral("GlobalTheme"));
         const QString gtkThemeName = readAppearanceStringProperty(QStringLiteral("GtkTheme"));
         const QString iconThemeName = readAppearanceStringProperty(QStringLiteral("IconTheme"));
@@ -427,7 +453,7 @@ private:
 
     QPointer<NativeMenuThemeSync> m_menuThemeSync;
     QTimer m_syncTimer;
-    QTimer m_pollTimer;
+    bool m_appearanceAvailable = false;
     QString m_lastGlobalThemeName;
     QString m_lastGtkThemeName;
     QString m_lastIconThemeName;

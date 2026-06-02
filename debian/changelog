@@ -1,3 +1,9 @@
+dde-shell (2.2.1) unstable; urgency=medium
+
+  * fix: avoid blocking startup on Appearance1 activation.
+
+ -- shule1987 <shule1987@qq.com>  Tue, 02 Jun 2026 10:59:12 +0800
+
 dde-shell (2.2.0) unstable; urgency=medium
 
   * chore: release 2.2.0.
