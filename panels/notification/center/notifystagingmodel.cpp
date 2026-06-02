@@ -21,6 +21,7 @@ namespace notifycenter {
 NotifyStagingModel::NotifyStagingModel(QObject *parent)
     : QAbstractListModel(parent)
     , m_accessor(DataAccessorProxy::instance())
+    , m_contentRowCount(NotifySetting::instance()->contentRowCount())
 {
     connect(NotifyAccessor::instance(), &NotifyAccessor::stagingEntityReceived, this, &NotifyStagingModel::doEntityReceived);
     connect(NotifyAccessor::instance(), &NotifyAccessor::stagingEntityClosed, this, &NotifyStagingModel::onEntityClosed);
@@ -52,7 +53,7 @@ void NotifyStagingModel::push(const NotifyEntity &entity)
             const int row = count - 1;
             auto notify = m_appNotifies[row];
             beginRemoveRows(QModelIndex(), row, row);
-            m_appNotifies.removeOne(notify);
+            m_appNotifies.removeAt(row);
             endRemoveRows();
             notify->deleteLater();
         }
@@ -106,7 +107,7 @@ void NotifyStagingModel::remove(qint64 id)
         const auto entity = notify->entity();
 
         beginRemoveRows(QModelIndex(), row, row);
-        m_appNotifies.removeOne(notify);
+        m_appNotifies.removeAt(row);
         notify->deleteLater();
         endRemoveRows();
 
@@ -172,7 +173,8 @@ void NotifyStagingModel::open()
         auto notify = new AppNotifyItem(entities.at(i));
         m_appNotifies << notify;
     }
-    updateOverlapCount(entities.size());
+    const int boundedCount = std::min(static_cast<int>(entities.size()), BubbleMaxCount + OverlayMaxCount);
+    m_overlapCount = std::max(0, boundedCount - static_cast<int>(m_appNotifies.size()));
 
     endResetModel();
 }
@@ -219,7 +221,7 @@ QVariant NotifyStagingModel::data(const QModelIndex &index, int role) const
             return std::min(OverlayMaxCount, overlapCount());
         }
     } else if (role == NotifyRole::NotifyContentRowCount) {
-        return NotifySetting::instance()->contentRowCount();
+        return m_contentRowCount;
     }
     return QVariant::fromValue(notify);
 }
@@ -229,11 +231,24 @@ void NotifyStagingModel::updateTime()
     if (m_appNotifies.isEmpty())
         return;
 
+    int firstChanged = -1;
+    int lastChanged = -1;
     QList<AppNotifyItem *> tmp = m_appNotifies;
-    for (auto item : tmp) {
+    for (int row = 0; row < tmp.size(); ++row) {
+        auto item = tmp.at(row);
+        const QString previousTime = item->time();
         item->updateTime();
+        if (item->time() != previousTime) {
+            if (firstChanged < 0) {
+                firstChanged = row;
+            }
+            lastChanged = row;
+        }
     }
-    dataChanged(index(0), index(rowCount(QModelIndex()) - 1), {NotifyTime});
+
+    if (firstChanged >= 0) {
+        dataChanged(index(firstChanged), index(lastChanged), {NotifyTime});
+    }
 }
 
 NotifyEntity NotifyStagingModel::notifyById(qint64 id) const

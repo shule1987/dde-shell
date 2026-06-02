@@ -58,7 +58,8 @@ void RoleGroupModel::setSourceModel(QAbstractItemModel *model)
                 m_rowMap.append(list);
                 endInsertRows();
             } else {
-                beginInsertRows(index(m_rowMap.indexOf(list), 0), list->size(), list->size());
+                const int parentRow = m_rowMap.indexOf(list);
+                beginInsertRows(index(parentRow, 0), list->size(), list->size());
                 list->append(i);
                 endInsertRows();
             }
@@ -71,18 +72,19 @@ void RoleGroupModel::setSourceModel(QAbstractItemModel *model)
             auto sourceRows = m_rowMap.value(i);
             for (int j = 0; j < sourceRows->size(); ++j) {
                 if (first <= sourceRows->value(j) && last >= sourceRows->value(j)) {
-                    beginRemoveRows(index(m_rowMap.indexOf(sourceRows), 0), j, j);
+                    beginRemoveRows(index(i, 0), j, j);
                     sourceRows->removeAt(j);
                     endRemoveRows();
                     --j;
                 }
             }
             if (sourceRows->size() == 0) {
-                beginRemoveRows(QModelIndex(), m_rowMap.indexOf(sourceRows), m_rowMap.indexOf(sourceRows));
+                beginRemoveRows(QModelIndex(), i, i);
                 m_map.remove(m_map.key(sourceRows));
-                m_rowMap.removeOne(sourceRows);
+                m_rowMap.removeAt(i);
                 delete sourceRows;
                 endRemoveRows();
+                --i;
             }
         }
         adjustMap(first, -((last - first) + 1));
@@ -103,7 +105,8 @@ void RoleGroupModel::setSourceModel(QAbstractItemModel *model)
 
             int childRow = list->indexOf(i);
             if (childRow >= 0) {
-                auto index = createIndex(childRow, 0, m_rowMap.indexOf(list));
+                const int parentRow = m_rowMap.indexOf(list);
+                auto index = createIndex(childRow, 0, parentRow);
                 Q_EMIT dataChanged(index, index, roles);
             }
         }
@@ -284,13 +287,14 @@ QModelIndex RoleGroupModel::mapFromSource(const QModelIndex &sourceIndex) const
         return {};
     }
 
+    const int parentRow = m_rowMap.indexOf(list);
     if (sourceIndex.row() == list->first()) {
-        return createIndex(m_rowMap.indexOf(list), 0, -1);
+        return createIndex(parentRow, 0, -1);
     }
 
     auto pos = list->indexOf(sourceIndex.row());
     if (pos >= 0) {
-        return createIndex(pos, 0, m_rowMap.indexOf(list));
+        return createIndex(pos, 0, parentRow);
     }
 
     return QModelIndex();

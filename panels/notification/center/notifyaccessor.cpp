@@ -42,6 +42,7 @@ public:
 
 NotifyAccessor::NotifyAccessor(QObject *parent)
     : m_pinnedApps(InvalidPinnedApps)
+    , m_pinnedAppSet(InvalidPinnedApps.cbegin(), InvalidPinnedApps.cend())
 {
     Q_UNUSED(parent)
     if (!qEnvironmentVariableIsEmpty("DS_NOTIFICATION_DEBUG")) {
@@ -122,6 +123,12 @@ QList<NotifyEntity> NotifyAccessor::fetchEntities(const QString &appName, int ma
     return ret;
 }
 
+QList<NotifyEntity> NotifyAccessor::fetchLastEntitiesByApps(int maxCount)
+{
+    qDebug(notifyLog) << "Fetch last entities by apps count" << maxCount;
+    return m_accessor->fetchLastEntitiesByApps(NotifyEntity::Processed, maxCount);
+}
+
 QStringList NotifyAccessor::fetchApps(int maxCount) const
 {
     qDebug(notifyLog) << "Fetch apps count" << maxCount;
@@ -187,9 +194,12 @@ void NotifyAccessor::pinApplication(const QString &appId, bool pin)
 
     if (!pin) {
         m_pinnedApps.removeOne(appId);
+        m_pinnedAppSet.remove(appId);
     } else {
-        if (!m_pinnedApps.contains(appId))
+        if (!m_pinnedAppSet.contains(appId)) {
             m_pinnedApps.append(appId);
+            m_pinnedAppSet.insert(appId);
+        }
     }
     QScopedPointer<DConfig> config(DConfig::create("org.deepin.dde.shell", "org.deepin.dde.shell.notification"));
     config->setValue("pinnedApps", m_pinnedApps);
@@ -197,15 +207,17 @@ void NotifyAccessor::pinApplication(const QString &appId, bool pin)
 
 bool NotifyAccessor::applicationPin(const QString &appId) const
 {
-    if (m_pinnedApps.contains(appId))
+    if (m_pinnedAppSet.contains(appId))
         return true;
 
-    if (m_pinnedApps.contains(InvalidApp)) {
+    if (m_pinnedAppSet.contains(InvalidApp)) {
         QScopedPointer<DConfig> config(DConfig::create("org.deepin.dde.shell", "org.deepin.dde.shell.notification"));
-        const_cast<NotifyAccessor*>(this)->m_pinnedApps = config->value("pinnedApps").toStringList();
+        auto that = const_cast<NotifyAccessor*>(this);
+        that->m_pinnedApps = config->value("pinnedApps").toStringList();
+        that->m_pinnedAppSet = QSet<QString>(that->m_pinnedApps.cbegin(), that->m_pinnedApps.cend());
     }
 
-    return m_pinnedApps.contains(appId);
+    return m_pinnedAppSet.contains(appId);
 }
 
 void NotifyAccessor::openNotificationSetting()

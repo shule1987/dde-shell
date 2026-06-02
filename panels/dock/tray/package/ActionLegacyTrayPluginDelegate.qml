@@ -18,8 +18,17 @@ AppletItemButton {
     id: root
     property alias inputEventsEnabled: surfaceItem.inputEventsEnabled
 
-    property size visualSize: isHorizontal ? Qt.size(pluginItem.implicitWidth, Math.min(itemHeight, pluginItem.implicitHeight))
-                                           : Qt.size(Math.min(itemWidth, pluginItem.implicitWidth), pluginItem.implicitHeight)
+    readonly property int fallbackItemSize: DDT.TrayItemPositionManager.itemVisualSize.width
+    readonly property int availableItemWidth: itemWidth > 0 ? itemWidth : fallbackItemSize
+    readonly property int availableItemHeight: itemHeight > 0 ? itemHeight : fallbackItemSize
+    readonly property bool pluginSizeReady: pluginItem.implicitWidth > 1 && pluginItem.implicitHeight > 1
+    readonly property real effectivePluginWidth: pluginSizeReady ? pluginItem.implicitWidth : fallbackItemSize
+    readonly property real effectivePluginHeight: pluginSizeReady ? pluginItem.implicitHeight : fallbackItemSize
+    property size visualSize: isHorizontal
+        ? Qt.size(Math.max(fallbackItemSize, effectivePluginWidth),
+                  Math.min(availableItemHeight, Math.max(fallbackItemSize, effectivePluginHeight)))
+        : Qt.size(Math.min(availableItemWidth, Math.max(fallbackItemSize, effectivePluginWidth)),
+                  Math.max(fallbackItemSize, effectivePluginHeight))
 
     readonly property int itemWidth: isHorizontal ? 0 : DDT.TrayItemPositionManager.dockHeight
     readonly property int itemHeight: isHorizontal ? DDT.TrayItemPositionManager.dockHeight : 0
@@ -29,7 +38,7 @@ AppletItemButton {
 
     padding: 0
 
-    visible: !Drag.active && itemVisible
+    opacity: Drag.active ? 0 : 1
     hoverEnabled: inputEventsEnabled
 
     function reportSpotlight(point) {
@@ -45,11 +54,65 @@ AppletItemButton {
         pluginItem.plugin.margins = itemPadding
     }
 
+    function schedulePluginSurfaceSync() {
+        updatePluginItemGeometryTimer.restart()
+        updatePluginItemPosTimer.restart()
+    }
+
+    function scheduleDockContentSync() {
+        if (Panel.isResizing || !Panel.rootObject || !Panel.rootObject.scheduleDockSizeContentSync) {
+            return
+        }
+
+        Panel.rootObject.scheduleDockSizeContentSync()
+    }
+
     contentItem: Item {
         id: pluginItem
-        property var plugin: DockCompositor.findSurface(model.surfaceId)
+        width: root.width
+        height: root.height
+        property var plugin: {
+            DockCompositor.pluginSurfaceRevision
+            return DockCompositor.findSurface(model.surfaceId)
+        }
         implicitHeight: plugin ? plugin.height : 0
         implicitWidth: plugin ? plugin.width : 0
+
+        function syncPluginGeometry() {
+            if (!pluginItem.plugin || !itemVisible)
+                return
+
+            updatePluginMargins()
+            const geometryWidth = Math.max(1, Math.round(surfaceItem.width > 1 ? surfaceItem.width : root.visualSize.width))
+            const geometryHeight = Math.max(1, Math.round(surfaceItem.height > 1 ? surfaceItem.height : root.visualSize.height))
+            pluginItem.plugin.updatePluginGeometry(Qt.rect(Math.round(pluginItem.itemScenePoint.x),
+                                                           Math.round(pluginItem.itemScenePoint.y),
+                                                           geometryWidth,
+                                                           geometryHeight))
+        }
+
+        function syncPluginGlobalPos() {
+            if (!pluginItem.plugin || !itemVisible)
+                return
+
+            pluginItem.plugin.setGlobalPos(Qt.point(Math.round(pluginItem.itemGlobalPos.x),
+                                                    Math.round(pluginItem.itemGlobalPos.y)))
+        }
+
+        onPluginChanged: {
+            root.schedulePluginSurfaceSync()
+            root.scheduleDockContentSync()
+            surfaceItem.fixPosition()
+        }
+
+        onImplicitWidthChanged: {
+            root.schedulePluginSurfaceSync()
+            root.scheduleDockContentSync()
+        }
+        onImplicitHeightChanged: {
+            root.schedulePluginSurfaceSync()
+            root.scheduleDockContentSync()
+        }
 
         function localItemPoint() {
             let current = pluginItem
@@ -116,48 +179,34 @@ AppletItemButton {
 
             onWidthChanged: updatePluginItemGeometryTimer.start()
             onHeightChanged: updatePluginItemGeometryTimer.start()
+            onShellSurfaceChanged: root.schedulePluginSurfaceSync()
+            onVisibleChanged: root.schedulePluginSurfaceSync()
         }
 
         Component.onCompleted: {
             if (!pluginItem.plugin || !itemVisible)
                 return
-            updatePluginMargins()
-            pluginItem.plugin.updatePluginGeometry(Qt.rect(Math.round(pluginItem.itemScenePoint.x),
-                                                           Math.round(pluginItem.itemScenePoint.y),
-                                                           Math.round(surfaceItem.width),
-                                                           Math.round(surfaceItem.height)))
-            pluginItem.plugin.setGlobalPos(Qt.point(Math.round(pluginItem.itemGlobalPos.x),
-                                                    Math.round(pluginItem.itemGlobalPos.y)))
+            pluginItem.syncPluginGeometry()
+            pluginItem.syncPluginGlobalPos()
         }
 
         Timer {
             id: updatePluginItemGeometryTimer
-            interval: 200
+            interval: 16
             running: false
             repeat: false
             onTriggered: {
-                if (!pluginItem.plugin || !itemVisible)
-                    return
-                updatePluginMargins()
-                if (pluginItem.itemScenePoint.x >= 0 && pluginItem.itemScenePoint.y >= 0) {
-                    pluginItem.plugin.updatePluginGeometry(Qt.rect(Math.round(pluginItem.itemScenePoint.x),
-                                                                   Math.round(pluginItem.itemScenePoint.y),
-                                                                   Math.round(surfaceItem.width),
-                                                                   Math.round(surfaceItem.height)))
-                }
+                pluginItem.syncPluginGeometry()
             }
         }
 
         Timer {
             id: updatePluginItemPosTimer
-            interval: 200
+            interval: 16
             running: false
             repeat: false
             onTriggered: {
-                if (!pluginItem.plugin || !itemVisible)
-                    return
-                pluginItem.plugin.setGlobalPos(Qt.point(Math.round(pluginItem.itemGlobalPos.x),
-                                                        Math.round(pluginItem.itemGlobalPos.y)))
+                pluginItem.syncPluginGlobalPos()
             }
         }
 
@@ -171,12 +220,19 @@ AppletItemButton {
         }
 
         onVisibleChanged: {
-            if (!pluginItem.plugin || !itemVisible)
-                return
-            updatePluginMargins()
-            pluginItem.plugin.setGlobalPos(Qt.point(Math.round(pluginItem.itemGlobalPos.x),
-                                                    Math.round(pluginItem.itemGlobalPos.y)))
+            root.schedulePluginSurfaceSync()
         }
+    }
+
+    onItemVisibleChanged: schedulePluginSurfaceSync()
+    onWidthChanged: {
+        schedulePluginSurfaceSync()
+        updateDragImage()
+    }
+    onHeightChanged: schedulePluginSurfaceSync()
+    onVisualSizeChanged: {
+        schedulePluginSurfaceSync()
+        scheduleDockContentSync()
     }
 
     D.ColorSelector.hovered: root.inputEventsEnabled && (pluginItem.plugin && pluginItem.plugin.isItemActive || hoverHandler.hovered || root.hovered)
@@ -227,7 +283,7 @@ AppletItemButton {
         Panel.contextDragging = true
     }
 
-    onWidthChanged: {
+    function updateDragImage() {
         if (Qt.platform.pluginName !== "xcb") {
             root.grabToImage(function(result) {
                 root.Drag.imageSource = result.url;

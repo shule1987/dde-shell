@@ -15,16 +15,17 @@ DockCombineModel::DockCombineModel(QAbstractItemModel *major, QAbstractItemModel
     , AbstractTaskManagerInterface(this)
 {
     // due to role has changed by RoleGroupModel, so we redirect role to TaskManager::Roles.
-    m_roleMaps = {{TaskManager::ActiveRole, RoleCombineModel::roleNames().key(MODEL_ACTIVE)},
-                  {TaskManager::AttentionRole, RoleCombineModel::roleNames().key(MODEL_ATTENTION)},
-                  {TaskManager::DesktopIdRole, RoleCombineModel::roleNames().key(MODEL_DESKTOPID)},
-                  {TaskManager::IconNameRole, RoleCombineModel::roleNames().key(MODEL_ICONNAME)},
-                  {TaskManager::IdentityRole, RoleCombineModel::roleNames().key(MODEL_IDENTIFY)},
-                  {TaskManager::ActionsRole, RoleCombineModel::roleNames().key(MODEL_ACTIONS)},
-                  {TaskManager::NameRole, RoleCombineModel::roleNames().key(MODEL_NAME)},
-                  {TaskManager::WinIdRole, RoleCombineModel::roleNames().key(MODEL_WINID)},
-                  {TaskManager::WinIconRole, RoleCombineModel::roleNames().key(MODEL_WINICON)},
-                  {TaskManager::WinTitleRole, RoleCombineModel::roleNames().key(MODEL_TITLE)}};
+    const auto combinedRoleNames = RoleCombineModel::roleNames();
+    m_roleMaps = {{TaskManager::ActiveRole, combinedRoleNames.key(MODEL_ACTIVE)},
+                  {TaskManager::AttentionRole, combinedRoleNames.key(MODEL_ATTENTION)},
+                  {TaskManager::DesktopIdRole, combinedRoleNames.key(MODEL_DESKTOPID)},
+                  {TaskManager::IconNameRole, combinedRoleNames.key(MODEL_ICONNAME)},
+                  {TaskManager::IdentityRole, combinedRoleNames.key(MODEL_IDENTIFY)},
+                  {TaskManager::ActionsRole, combinedRoleNames.key(MODEL_ACTIONS)},
+                  {TaskManager::NameRole, combinedRoleNames.key(MODEL_NAME)},
+                  {TaskManager::WinIdRole, combinedRoleNames.key(MODEL_WINID)},
+                  {TaskManager::WinIconRole, combinedRoleNames.key(MODEL_WINICON)},
+                  {TaskManager::WinTitleRole, combinedRoleNames.key(MODEL_TITLE)}};
     
     connect(sourceModel(), &QAbstractItemModel::dataChanged, this, &DockCombineModel::onSourceDataChanged);
 }

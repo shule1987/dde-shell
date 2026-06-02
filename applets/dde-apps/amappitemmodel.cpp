@@ -9,6 +9,7 @@
 #include "objectmanager1interface.h"
 
 #include <DUtil>
+#include <QFutureWatcher>
 #include <QtConcurrent>
 
 Q_LOGGING_CATEGORY(appsLog, "org.deepin.dde.shell.dde-apps.amappitemmodel")
@@ -32,39 +33,57 @@ AMAppItemModel::AMAppItemModel(QObject *parent)
 
     connect(m_manager, &ObjectManager::InterfacesAdded, this, [this](const QDBusObjectPath &objPath, ObjectInterfaceMap interfacesAndProperties) {
         auto desktopId = DUtil::unescapeFromObjectPath(objPath.path().split('/').last());
-        if (!match(index(0, 0), AppItemModel::DesktopIdRole, desktopId, 1, Qt::MatchExactly).isEmpty()) {
+        if (m_appItemsByDesktopId.contains(desktopId)) {
             qCWarning(appsLog()) << "desktopId: " << desktopId << " already contains";
             return;
         }
-        appendRow(new AMAppItem(objPath, interfacesAndProperties));
+        auto appItem = new AMAppItem(objPath, interfacesAndProperties);
+        m_appItemsByDesktopId.insert(desktopId, appItem);
+        appendRow(appItem);
     });
 
     connect(m_manager, &ObjectManager::InterfacesRemoved, this, [this](const QDBusObjectPath &objPath, const QStringList &interfaces) {
         Q_UNUSED(interfaces)
         auto desktopId = DUtil::unescapeFromObjectPath(objPath.path().split('/').last());
-        auto res = match(index(0, 0), AppItemModel::DesktopIdRole, desktopId, 1, Qt::MatchExactly);
-        if (res.isEmpty()) {
+        auto appItem = m_appItemsByDesktopId.take(desktopId);
+        if (!appItem) {
             qCWarning(appsLog()) << "failed find desktopId: " << desktopId;
             return;
         }
-        removeRow(res.first().row());
+        removeRow(appItem->row());
     });
 
-    // load static desktop info from am
-    auto future = QtConcurrent::run([this]() {
-        auto apps = m_manager->GetManagedObjects().value();
+    // Load static desktop info off the UI thread, then mutate the model on this thread.
+    auto watcher = new QFutureWatcher<ObjectMap>(this);
+    connect(watcher, &QFutureWatcher<ObjectMap>::finished, this, [this, watcher]() {
+        const auto apps = watcher->result();
 
+        QList<QStandardItem *> pendingItems;
         for (auto app = apps.cbegin(); app != apps.cend(); app++) {
             auto path = app.key();
             if (!path.path().isEmpty()) {
-                auto c = new AMAppItem(path, app.value());
-                appendRow(c);
+                const auto desktopId = DUtil::unescapeFromObjectPath(path.path().split('/').last());
+                if (!m_appItemsByDesktopId.contains(desktopId)) {
+                    auto appItem = new AMAppItem(path, app.value());
+                    m_appItemsByDesktopId.insert(desktopId, appItem);
+                    pendingItems << appItem;
+                }
             }
         }
+        if (!pendingItems.isEmpty()) {
+            invisibleRootItem()->appendRows(pendingItems);
+        }
 
-        setProperty("ready", true);
+        m_ready = true;
+        Q_EMIT readyChanged(m_ready);
         qCDebug(appsLog) << "AMAppItemModel is now ready with apps counts:" << rowCount();
+        watcher->deleteLater();
     });
+
+    watcher->setFuture(QtConcurrent::run([]() {
+        ObjectManager manager("org.desktopspec.ApplicationManager1", "/org/desktopspec/ApplicationManager1", QDBusConnection::sessionBus());
+        return manager.GetManagedObjects().value();
+    }));
 }
 
 bool AMAppItemModel::ready() const
@@ -74,12 +93,7 @@ bool AMAppItemModel::ready() const
 
 AMAppItem * AMAppItemModel::appItem(const QString &id)
 {
-    for (int i = 0; i < rowCount(); i++) {
-        auto app = item(i);
-        if (app->data(AppItemModel::DesktopIdRole).toString() == id)
-            return static_cast<AMAppItem *>(app);
-    }
-    return nullptr;
+    return m_appItemsByDesktopId.value(id, nullptr);
 }
 
 }

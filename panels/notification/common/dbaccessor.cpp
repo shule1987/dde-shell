@@ -447,6 +447,56 @@ QList<NotifyEntity> DBAccessor::fetchEntities(const QString &appName, int proces
     return ret;
 }
 
+QList<NotifyEntity> DBAccessor::fetchLastEntitiesByApps(int processedType, int maxCount)
+{
+    BENCHMARK();
+
+    QMutexLocker locker(&m_mutex);
+    QSqlQuery query(m_connection);
+    QString cmd = QString(
+        "SELECT %1 FROM notifications2 "
+        "WHERE ID IN ("
+        "    SELECT ("
+        "        SELECT latest.ID FROM notifications2 latest "
+        "        WHERE latest.AppName = apps.AppName "
+        "          AND (latest.ProcessedType = :processedType OR latest.ProcessedType IS NULL) "
+        "        ORDER BY latest.CTime DESC, latest.ID DESC LIMIT 1"
+        "    ) "
+        "    FROM ("
+        "        SELECT DISTINCT AppName FROM notifications2 "
+        "        WHERE (ProcessedType = :processedType OR ProcessedType IS NULL)"
+        "    ) apps"
+        ") "
+        "ORDER BY CTime DESC, ID DESC")
+        .arg(EntityFields.join(","));
+    if (maxCount >= 0) {
+        cmd += QStringLiteral(" LIMIT :limit");
+    }
+
+    query.prepare(cmd);
+    query.bindValue(":processedType", processedType);
+    if (maxCount >= 0) {
+        query.bindValue(":limit", maxCount);
+    }
+
+    if (!query.exec()) {
+        qWarning(notifyDBLog) << "Query execution error:" << query.lastError().text();
+        return {};
+    }
+
+    QList<NotifyEntity> ret;
+    while (query.next()) {
+        auto entity = parseEntity(query);
+        if (!entity.isValid()) {
+            continue;
+        }
+        ret.append(entity);
+    }
+
+    qDebug(notifyDBLog) << "Fetched last entities by app size:" << ret.size();
+    return ret;
+}
+
 NotifyEntity DBAccessor::fetchLastEntity(uint notifyId)
 {
     BENCHMARK();
@@ -478,12 +528,18 @@ QList<QString> DBAccessor::fetchApps(int maxCount) const
     QMutexLocker locker(&m_mutex);
     QSqlQuery query(m_connection);
     if (maxCount >= 0) {
-        QString cmd("SELECT DISTINCT AppName FROM notifications2 ORDER BY CTime DESC LIMIT :limit");
+        QString cmd("SELECT AppName FROM notifications2 "
+                    "WHERE (ProcessedType = :processedType OR ProcessedType IS NULL) "
+                    "GROUP BY AppName ORDER BY MAX(CTime) DESC LIMIT :limit");
         query.prepare(cmd);
+        query.bindValue(":processedType", NotifyEntity::Processed);
         query.bindValue(":limit", maxCount);
     } else {
-        QString cmd("SELECT DISTINCT AppName FROM notifications2 ORDER BY CTime DESC");
+        QString cmd("SELECT AppName FROM notifications2 "
+                    "WHERE (ProcessedType = :processedType OR ProcessedType IS NULL) "
+                    "GROUP BY AppName ORDER BY MAX(CTime) DESC");
         query.prepare(cmd);
+        query.bindValue(":processedType", NotifyEntity::Processed);
     }
 
     if (!query.exec()) {
@@ -625,6 +681,18 @@ void DBAccessor::tryToCreateTable()
             if (it.key() == ColumnProcessedType) {
                 updateProcessTypeValue();
             }
+        }
+    }
+
+    const QStringList indexStatements = {
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_notifications2_processed_ctime ON notifications2(ProcessedType, CTime DESC)"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_notifications2_app_processed_ctime ON notifications2(AppName, ProcessedType, CTime DESC)"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_notifications2_notifyid_ctime ON notifications2(NotifyId, CTime DESC)"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_notifications2_app_ctime ON notifications2(AppName, CTime DESC)"),
+    };
+    for (const QString &statement : indexStatements) {
+        if (!query.exec(statement)) {
+            qWarning(notifyDBLog) << "create index failed" << query.lastError().text() << statement;
         }
     }
 }

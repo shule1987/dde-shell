@@ -7,6 +7,7 @@
 #include "dockcombinemodel.h"
 #include <QAbstractProxyModel>
 #include <QPointer>
+#include <QSet>
 #include <tuple>
 
 namespace dock
@@ -40,6 +41,9 @@ public:
     void requestWindowsView(const QModelIndexList &indexes) const override;
 
     void moveItem(int from, int to);
+    bool setDropPlaceholderElement(const QString &dockElement);
+    void commitDropPlaceholder();
+    void clearDropPlaceholder();
 
 public slots:
     void initDockedElements(bool unused);
@@ -49,6 +53,8 @@ private:
     QString getMenus(const QModelIndex &index) const;
     void groupItemsByApp();
     QString dockElementForRow(int row) const;
+    int rowForDockElement(const QString &type, const QString &id) const;
+    bool isDropPlaceholderRow(int row) const;
     QString displayNameFor(const QString &type, const QString &id) const;
     QString iconNameFor(const QString &type, const QString &id) const;
     QStringList previewIconsFor(const QString &type, const QString &id) const;
@@ -59,6 +65,9 @@ private:
 
     // type, id
     QList<std::tuple<QString, QString>> m_dockedElements;
+    QSet<QString> m_dockedElementKeys;
+    QString m_dropPlaceholderElement;
+    bool m_dropPlaceholderInserted = false;
     QAbstractItemModel *m_appsModel;
     DockCombineModel *m_activeAppModel;
     QAbstractItemModel *m_groupModel;

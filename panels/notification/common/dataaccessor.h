@@ -46,6 +46,12 @@ public:
         Q_UNUSED(maxCount)
         return {};
     }
+    virtual QList<NotifyEntity> fetchLastEntitiesByApps(int processedType, int maxCount)
+    {
+        Q_UNUSED(processedType);
+        Q_UNUSED(maxCount);
+        return {};
+    }
     virtual QList<QString> fetchApps(int maxCount) const { Q_UNUSED(maxCount); return {}; }
 
     virtual void removeEntity(qint64 id) { Q_UNUSED(id); }

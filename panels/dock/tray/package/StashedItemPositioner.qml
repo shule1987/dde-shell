@@ -8,7 +8,8 @@ import org.deepin.ds.dock.tray 1.0 as DDT
 
 Control {
     id: root
-    property bool itemVisible: !DDT.TraySortOrderModel.isUpdating
+    property bool itemVisible: true
+    visible: itemVisible || opacity > 0.01
 
     spacing: 0
     padding: 0
@@ -24,7 +25,6 @@ Control {
         State {
             when: root.itemVisible
             PropertyChanges { target: root; opacity: 1.0 }
-            PropertyChanges { target: root; visible: true }
         },
         State {
             name: "item-invisible"
@@ -37,7 +37,6 @@ Control {
             to: "item-invisible"
             SequentialAnimation {
                 NumberAnimation { property: "opacity"; easing.type: Easing.InQuad; duration: 200 }
-                PropertyAction { target: root; property: "visible"; value: false }
             }
         },
         Transition {

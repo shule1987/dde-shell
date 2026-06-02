@@ -54,6 +54,7 @@ Description: DDE Shell library
 Package: dde-shell
 Architecture: any
 Depends:
+ dde-application-manager,
  dde-tray-loader (>= 1.99.8),
  libdde-shell (= ${binary:Version}),
  libdtk6declarative,

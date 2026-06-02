@@ -45,6 +45,7 @@ LoadTrayPlugins::LoadTrayPlugins(QObject *parent)
 
 LoadTrayPlugins::~LoadTrayPlugins()
 {
+    m_shuttingDown = true;
     for (auto &pInfo : m_processes) {
         if (pInfo.process) {
             pInfo.process->kill();
@@ -75,14 +76,19 @@ void LoadTrayPlugins::handleProcessFinished(int exitCode, QProcess::ExitStatus e
     auto *process = qobject_cast<QProcess*>(sender());
     if (!process) return;
 
-    if (exitCode == SIGKILL || exitCode == SIGTERM || exitStatus != QProcess::CrashExit) return;
+    if (m_shuttingDown) {
+        return;
+    }
 
     for (auto it = m_processes.begin(); it != m_processes.end(); ++it) {
         if (it->process == process) {
             if (it->retryCount < m_maxRetries) {
                 it->retryCount++;
-                qWarning() << "Plugin exit:" << it->pluginPath << " code:" << exitCode << " exitStatus:" << exitStatus;
-                QTimer::singleShot(1000, process, [ this, process ] {
+                qWarning() << "Tray plugin loader exited, restarting:" << it->pluginPath << "code:" << exitCode << "exitStatus:" << exitStatus;
+                QTimer::singleShot(500, process, [ this, process ] {
+                    if (m_shuttingDown || process->state() != QProcess::NotRunning) {
+                        return;
+                    }
                     setProcessEnv(process);
                     process->start();
                 });
@@ -103,6 +109,20 @@ void LoadTrayPlugins::startProcess(const QString &loaderPath, const QString &plu
 
     connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, &LoadTrayPlugins::handleProcessFinished);
+    connect(process, &QProcess::started, this, [this, process] {
+        QTimer::singleShot(5000, process, [this, process] {
+            if (m_shuttingDown || process->state() != QProcess::Running) {
+                return;
+            }
+
+            for (auto &processInfo : m_processes) {
+                if (processInfo.process == process) {
+                    processInfo.retryCount = 0;
+                    break;
+                }
+            }
+        });
+    });
 
     ProcessInfo pInfo = { process, pluginPath, 0 };
     m_processes.append(pInfo);

@@ -167,6 +167,7 @@ private:
     void connectDataModelSignals();
     void disconnectDataModelSignals();
     void scheduleCalculation();
+    void updateTitleRole();
 
     qreal calculateBaselineWidth(int charCount) const;
     qreal calculateElidedTextWidth(const QString &text, qreal maxWidth) const;
@@ -184,6 +185,7 @@ private:
     qreal m_remainingSpace;
     bool m_enabled;
     bool m_calculationPending;
+    int m_titleRole = -1;
     QTimer m_calculationTimer;
 
     QHash<int, qreal> m_baselineWidthCache; // Cache for baseline widths of different character counts

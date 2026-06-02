@@ -42,6 +42,7 @@ private:
 
     QList<ProcessInfo> m_processes;
     const int m_maxRetries = 5;
+    bool m_shuttingDown = false;
 };
 
 }

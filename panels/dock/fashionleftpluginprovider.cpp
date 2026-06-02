@@ -2264,8 +2264,7 @@ MusicSnapshot currentMusicSnapshot(const QString &previousService)
             snapshot.artSource = stableMusicArtSource(artUrl);
         }
 
-        const bool hasWindow = !bestWindowIdForPid(servicePid).isEmpty();
-        if (!hasWindow && !snapshot.playing) {
+        if (!snapshot.playing && bestWindowIdForPid(servicePid).isEmpty()) {
             continue;
         }
 
@@ -3278,10 +3277,15 @@ void FashionLeftPluginProvider::refreshSystemStats()
     }
 
     const QStringList activeInterfaces = preferredNetworkInterfaces();
-    const quint64 receiveBytes = totalInterfaceBytes(true, activeInterfaces);
-    const quint64 transmitBytes = totalInterfaceBytes(false, activeInterfaces);
-    const quint64 aggregateReceiveBytes = activeInterfaces.isEmpty() ? receiveBytes : totalInterfaceBytes(true, {});
-    const quint64 aggregateTransmitBytes = activeInterfaces.isEmpty() ? transmitBytes : totalInterfaceBytes(false, {});
+    quint64 receiveBytes = 0;
+    quint64 transmitBytes = 0;
+    interfaceByteTotals(activeInterfaces, &receiveBytes, &transmitBytes);
+
+    quint64 aggregateReceiveBytes = receiveBytes;
+    quint64 aggregateTransmitBytes = transmitBytes;
+    if (!activeInterfaces.isEmpty()) {
+        interfaceByteTotals({}, &aggregateReceiveBytes, &aggregateTransmitBytes);
+    }
 
     QString nextDownloadSpeed = m_downloadSpeedText;
     QString nextUploadSpeed = m_uploadSpeedText;
@@ -3490,13 +3494,16 @@ void FashionLeftPluginProvider::refreshAiState()
         }
 
         QStringList candidateToolIds = currentRunningCounts.keys();
+        QSet<QString> candidateToolIdSet(candidateToolIds.cbegin(), candidateToolIds.cend());
         for (auto it = currentCompletedCounts.cbegin(); it != currentCompletedCounts.cend(); ++it) {
-            if ((it.value() > 0 || currentRunningCounts.value(it.key()) > 0) && !candidateToolIds.contains(it.key())) {
+            if ((it.value() > 0 || currentRunningCounts.value(it.key()) > 0) && !candidateToolIdSet.contains(it.key())) {
                 candidateToolIds << it.key();
+                candidateToolIdSet.insert(it.key());
             }
         }
-        if (!nextPrimaryToolId.isEmpty() && !candidateToolIds.contains(nextPrimaryToolId)) {
+        if (!nextPrimaryToolId.isEmpty() && !candidateToolIdSet.contains(nextPrimaryToolId)) {
             candidateToolIds.prepend(nextPrimaryToolId);
+            candidateToolIdSet.insert(nextPrimaryToolId);
         }
 
         std::sort(candidateToolIds.begin(), candidateToolIds.end(), [&currentRunningCounts, &currentActivityMsByTool, &nextLastSeenPidByTool, &nextPrimaryToolId](const QString &left, const QString &right) {
@@ -4244,6 +4251,8 @@ QStringList FashionLeftPluginProvider::preferredNetworkInterfaces()
     QHash<QString, QNetworkInterface> interfacesByName;
     QStringList physicalInterfaceNames;
     QStringList runningInterfaceNames;
+    QSet<QString> physicalInterfaceNameSet;
+    QSet<QString> runningInterfaceNameSet;
 
     for (const QNetworkInterface &networkInterface : allInterfaces) {
         const QString interfaceName = networkInterface.name().trimmed();
@@ -4255,18 +4264,22 @@ QStringList FashionLeftPluginProvider::preferredNetworkInterfaces()
             continue;
         }
 
-        if (!runningInterfaceNames.contains(interfaceName)) {
+        if (!runningInterfaceNameSet.contains(interfaceName)) {
+            runningInterfaceNameSet.insert(interfaceName);
             runningInterfaceNames << interfaceName;
         }
 
         if (isLikelyPhysicalTrafficInterface(networkInterface)
-            && !physicalInterfaceNames.contains(interfaceName)) {
+            && !physicalInterfaceNameSet.contains(interfaceName)) {
+            physicalInterfaceNameSet.insert(interfaceName);
             physicalInterfaceNames << interfaceName;
         }
     }
 
     QStringList defaultPhysicalInterfaceNames;
     QStringList defaultRunningInterfaceNames;
+    QSet<QString> defaultPhysicalInterfaceNameSet;
+    QSet<QString> defaultRunningInterfaceNameSet;
     const QStringList routeInterfaceNames = defaultRouteInterfaceNames();
     for (const QString &interfaceName : routeInterfaceNames) {
         const auto interfaceIterator = interfacesByName.constFind(interfaceName);
@@ -4279,12 +4292,14 @@ QStringList FashionLeftPluginProvider::preferredNetworkInterfaces()
             continue;
         }
 
-        if (!defaultRunningInterfaceNames.contains(interfaceName)) {
+        if (!defaultRunningInterfaceNameSet.contains(interfaceName)) {
+            defaultRunningInterfaceNameSet.insert(interfaceName);
             defaultRunningInterfaceNames << interfaceName;
         }
 
         if (isLikelyPhysicalTrafficInterface(networkInterface)
-            && !defaultPhysicalInterfaceNames.contains(interfaceName)) {
+            && !defaultPhysicalInterfaceNameSet.contains(interfaceName)) {
+            defaultPhysicalInterfaceNameSet.insert(interfaceName);
             defaultPhysicalInterfaceNames << interfaceName;
         }
     }
@@ -4369,15 +4384,21 @@ QString FashionLeftPluginProvider::formatTransferRate(double bytesPerSecond)
     return QString::number(qRound(bytesPerSecond)) + QStringLiteral("b/s");
 }
 
-quint64 FashionLeftPluginProvider::totalInterfaceBytes(bool receiveBytes, const QStringList &preferredInterfaces)
+void FashionLeftPluginProvider::interfaceByteTotals(const QStringList &preferredInterfaces, quint64 *receiveBytes, quint64 *transmitBytes)
 {
+    if (receiveBytes) {
+        *receiveBytes = 0;
+    }
+    if (transmitBytes) {
+        *transmitBytes = 0;
+    }
+
     QFile file(QStringLiteral("/proc/net/dev"));
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        return 0;
+        return;
     }
 
     const QList<QByteArray> lines = file.readAll().split('\n');
-    quint64 totalBytes = 0;
     for (const QByteArray &rawLine : lines) {
         const QString line = QString::fromUtf8(rawLine).trimmed();
         if (!line.contains(QLatin1Char(':'))) {
@@ -4403,10 +4424,13 @@ quint64 FashionLeftPluginProvider::totalInterfaceBytes(bool receiveBytes, const 
             continue;
         }
 
-        totalBytes += receiveBytes ? values.at(0).toULongLong() : values.at(8).toULongLong();
+        if (receiveBytes) {
+            *receiveBytes += values.at(0).toULongLong();
+        }
+        if (transmitBytes) {
+            *transmitBytes += values.at(8).toULongLong();
+        }
     }
-
-    return totalBytes;
 }
 
 void FashionLeftPluginProvider::ensureWeatherWatchPaths()

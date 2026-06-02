@@ -7,6 +7,7 @@
 #include <QVariant>
 #include <QAbstractListModel>
 #include <QLoggingCategory>
+#include <QSet>
 
 #include <DConfig>
 
@@ -55,7 +56,21 @@ NotificationSetting::NotificationSetting(QObject *parent)
 
 void NotificationSetting::setAppAccessor(QAbstractItemModel *model)
 {
+    if (m_appAccessor == model)
+        return;
+
+    if (m_appAccessor) {
+        disconnect(m_appAccessor, nullptr, this, nullptr);
+    }
+
     m_appAccessor = model;
+    if (!m_appAccessor) {
+        QMutexLocker locker(&m_appItemsMutex);
+        m_appItems.clear();
+        m_appItemById.clear();
+        return;
+    }
+
     QObject::connect(m_appAccessor, &QAbstractItemModel::rowsInserted, this, &NotificationSetting::onAppsChanged);
     QObject::connect(m_appAccessor, &QAbstractItemModel::rowsRemoved, this, &NotificationSetting::onAppsChanged);
 }
@@ -208,7 +223,9 @@ QVariant NotificationSetting::systemValue(NotificationSetting::SystemConfigItem 
 QStringList NotificationSetting::apps() const
 {
     QStringList ret;
-    for (const auto &item : appItems()) {
+    const auto items = appItems();
+    ret.reserve(items.size());
+    for (const auto &item : items) {
         ret << item.id;
     }
     return ret;
@@ -216,15 +233,19 @@ QStringList NotificationSetting::apps() const
 
 NotificationSetting::AppItem NotificationSetting::appItem(const QString &id) const
 {
-    const auto infos = appItems();
-    auto iter = std::find_if(infos.begin(), infos.end(), [id] (const AppItem &item) {
-        return id == item.id;
-    });
-    if (iter != infos.end()) {
-        return *iter;
+    QMutexLocker locker(&(const_cast<NotificationSetting *>(this)->m_appItemsMutex));
+    if (m_appItems.isEmpty()) {
+        QList<NotificationSetting::AppItem> apps = appItemsImpl();
+        auto that = const_cast<NotificationSetting *>(this);
+        that->m_appItems = apps;
+        that->m_appItemById.clear();
+        that->m_appItemById.reserve(apps.size());
+        for (const auto &item : std::as_const(apps)) {
+            that->m_appItemById.insert(item.id, item);
+        }
     }
 
-    return {};
+    return m_appItemById.value(id);
 }
 
 QList<NotificationSetting::AppItem> NotificationSetting::appItems() const
@@ -234,7 +255,13 @@ QList<NotificationSetting::AppItem> NotificationSetting::appItems() const
         return m_appItems;
 
     QList<NotificationSetting::AppItem> apps = appItemsImpl();
-    const_cast<NotificationSetting *>(this)->m_appItems = apps;
+    auto that = const_cast<NotificationSetting *>(this);
+    that->m_appItems = apps;
+    that->m_appItemById.clear();
+    that->m_appItemById.reserve(apps.size());
+    for (const auto &item : std::as_const(apps)) {
+        that->m_appItemById.insert(item.id, item);
+    }
     return m_appItems;
 }
 
@@ -278,13 +305,21 @@ void NotificationSetting::onAppsChanged()
     const auto old = appItems();
     const auto current = appItemsImpl();
 
+    QSet<QString> oldIds;
+    oldIds.reserve(old.size());
+    for (const auto &item : old) {
+        oldIds.insert(item.id);
+    }
+
+    QSet<QString> currentIds;
+    currentIds.reserve(current.size());
+    for (const auto &item : current) {
+        currentIds.insert(item.id);
+    }
+
     QList<NotificationSetting::AppItem> added;
     for (auto item : current) {
-        const auto id = item.id;
-        auto iter = std::find_if(old.begin(), old.end(), [id] (const NotificationSetting::AppItem &app) {
-            return id == app.id;
-        });
-        if (iter == old.end()) {
+        if (!oldIds.contains(item.id)) {
             added << item;
         }
     }
@@ -295,11 +330,7 @@ void NotificationSetting::onAppsChanged()
 
     QList<NotificationSetting::AppItem> removed;
     for (auto item : old) {
-        const auto id = item.id;
-        auto iter = std::find_if(current.begin(), current.end(), [id] (const NotificationSetting::AppItem &app) {
-            return id == app.id;
-        });
-        if (iter == current.end()) {
+        if (!currentIds.contains(item.id)) {
             removed << item;
         }
     }
@@ -311,6 +342,11 @@ void NotificationSetting::onAppsChanged()
     {
         QMutexLocker locker(&m_appItemsMutex);
         m_appItems = current;
+        m_appItemById.clear();
+        m_appItemById.reserve(current.size());
+        for (const auto &item : current) {
+            m_appItemById.insert(item.id, item);
+        }
     }
 }
 

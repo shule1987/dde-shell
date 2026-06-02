@@ -454,6 +454,11 @@ void DockHelper::updateCursorPosition(QEvent *event)
 
 void DockHelper::checkNeedHideOrNot()
 {
+    if (parent()->launcherShown()) {
+        parent()->setHideState(Show);
+        return;
+    }
+
     if (m_edgeWakeHoldTimer->isActive()) {
         return;
     }
@@ -495,6 +500,11 @@ void DockHelper::checkNeedHideOrNot()
 
 void DockHelper::checkNeedShowOrNot()
 {
+    if (parent()->launcherShown()) {
+        parent()->setHideState(Show);
+        return;
+    }
+
     bool needShow;
     switch (parent()->hideMode()) {
     case KeepShowing: {

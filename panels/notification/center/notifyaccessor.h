@@ -5,6 +5,7 @@
 #pragma once
 
 #include <QObject>
+#include <QSet>
 #include <QtQml/qqml.h>
 #include "notifyentity.h"
 
@@ -45,6 +46,7 @@ public:
     int fetchEntityCount(const QString &appName) const;
     NotifyEntity fetchLastEntity(const QString &appName) const;
     QList<NotifyEntity> fetchEntities(const QString &appName, int maxCount = -1);
+    QList<NotifyEntity> fetchLastEntitiesByApps(int maxCount = -1);
     QStringList fetchApps(int maxCount = -1) const;
     void removeEntity(qint64 id);
     void removeEntityByApp(const QString &appName);
@@ -73,6 +75,7 @@ private:
     DataAccessor *m_accessor = nullptr;
     QObject *m_dataUpdater = nullptr;
     QStringList m_pinnedApps;
+    QSet<QString> m_pinnedAppSet;
     bool m_debugging = false;
     bool m_enabled = false;
 };

@@ -26,6 +26,7 @@ TextCalculator::TextCalculator(QObject *parent)
     , m_remainingSpace(0)
     , m_enabled(false)
     , m_calculationPending(false)
+    , m_titleRole(-1)
 {
     m_calculationTimer.setSingleShot(true);
     m_calculationTimer.setInterval(16);
@@ -93,6 +94,7 @@ void TextCalculator::setDataModel(QAbstractItemModel *model)
         disconnectDataModelSignals();
         m_dataModel = model;
         connectDataModelSignals();
+        updateTitleRole();
         emit dataModelChanged();
         scheduleCalculation();
     }
@@ -142,8 +144,9 @@ void TextCalculator::connectDataModelSignals()
                 &QAbstractItemModel::dataChanged,
                 this,
                 [this](const QModelIndex &topLeft, const QModelIndex &bottomRight, const QList<int> &roles) {
-                    const auto titleRole = m_dataModel->roleNames().key("title");
-                    if (roles.contains(titleRole) || roles.isEmpty()) {
+                    Q_UNUSED(topLeft)
+                    Q_UNUSED(bottomRight)
+                    if (roles.contains(m_titleRole) || roles.isEmpty()) {
                         scheduleCalculation();
                     }
                 });
@@ -160,7 +163,19 @@ void TextCalculator::disconnectDataModelSignals()
 
 void TextCalculator::onDataModelChanged()
 {
+    updateTitleRole();
     scheduleCalculation();
+}
+
+void TextCalculator::updateTitleRole()
+{
+    m_titleRole = -1;
+    if (!m_dataModel) {
+        return;
+    }
+
+    const auto roleNames = m_dataModel->roleNames();
+    m_titleRole = roleNames.key("title", -1);
 }
 
 void TextCalculator::scheduleCalculation()
@@ -235,24 +250,12 @@ QStringList TextCalculator::getApplicationTitles() const
     }
 
     const int rowCount = m_dataModel->rowCount();
+    titles.reserve(rowCount);
 
     for (int i = 0; i < rowCount; ++i) {
         QModelIndex index = m_dataModel->index(i, 0);
-
-        QString title;
-
-        QHash<int, QByteArray> roleNames = m_dataModel->roleNames();
-
-        // Find title-related role
-        for (auto it = roleNames.begin(); it != roleNames.end(); ++it) {
-            if (it.value() == "title") {
-                QVariant titleData = m_dataModel->data(index, it.key());
-                if (titleData.isValid() && !titleData.toString().isEmpty()) {
-                    title = titleData.toString();
-                    break;
-                }
-            }
-        }
+        const QVariant titleData = m_titleRole >= 0 ? m_dataModel->data(index, m_titleRole) : QVariant();
+        const QString title = titleData.isValid() ? titleData.toString() : QString();
 
         // If title is empty, keep it as empty string (indicating icon-only display)
         titles.append(title);

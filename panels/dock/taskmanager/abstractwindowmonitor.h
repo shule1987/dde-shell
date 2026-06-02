@@ -12,6 +12,7 @@
 
 #include <QObject>
 #include <QAbstractListModel>
+#include <QHash>
 
 namespace dock {
 class AppItem;
@@ -63,5 +64,6 @@ Q_SIGNALS:
 
 private:
     QList<AbstractWindow*> m_trackedWindows;
+    QHash<AbstractWindow *, int> m_trackedWindowRows;
 };
 }

@@ -56,7 +56,7 @@ void DockItemModel::setSourceModel(QAbstractItemModel *model)
         beginInsertRows(QModelIndex(), currentCount, newCount - 1);
         endInsertRows();
     } else if (newCount < currentCount) {
-        beginRemoveRows(QModelIndex(), newCount, currentCount);
+        beginRemoveRows(QModelIndex(), newCount, currentCount - 1);
         endRemoveRows();
     }
 
@@ -87,8 +87,10 @@ void DockItemModel::setSourceModel(QAbstractItemModel *model)
         endMoveRows();
     });
 
-    auto bottomRight = this->index(std::min(currentCount, newCount), 0);
-    Q_EMIT dataChanged(index(0, 0), bottomRight);
+    const int changedCount = std::min(currentCount, newCount);
+    if (changedCount > 0) {
+        Q_EMIT dataChanged(index(0, 0), index(changedCount - 1, 0));
+    }
     m_isUpdating = false;
 }
 

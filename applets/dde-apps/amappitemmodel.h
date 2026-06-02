@@ -7,6 +7,8 @@
 #include "appitemmodel.h"
 #include "objectmanager1interface.h"
 
+#include <QHash>
+
 namespace apps
 {
 class AMAppItem;
@@ -27,5 +29,6 @@ signals:
 private:
     bool m_ready;
     ObjectManager *m_manager;
+    QHash<QString, AMAppItem *> m_appItemsByDesktopId;
 };
 }

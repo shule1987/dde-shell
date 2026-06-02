@@ -637,6 +637,7 @@ ContainmentItem {
                 required property string itemId
                 required property string dockElement
                 required property string itemKind
+                required property bool dropPlaceholder
                 required property string name
                 required property string title // winTitle
                 required property string iconName
@@ -651,6 +652,10 @@ ContainmentItem {
                 readonly property bool hiddenByOverflow: taskmanager.adaptiveFashionOverflowEnabled
                     && DelegateModel.itemsIndex > taskmanager.adaptiveFashionVisibleItemCount
                 readonly property bool hiddenByDrag: {
+                    if (dropPlaceholder) {
+                        return false
+                    }
+
                     let draggedAppId = taskmanager.Applet.desktopIdToAppId(launcherDndDropArea.launcherDndDesktopId)
                     if (itemId !== draggedAppId) {
                         return false
@@ -725,7 +730,7 @@ ContainmentItem {
                     // border.width: 1
                     id: appItemRect
                     color: "transparent"
-                    visible: !delegateRoot.overflowProxyItem && !delegateRoot.hiddenByOverflow
+                    visible: !delegateRoot.dropPlaceholder && !delegateRoot.overflowProxyItem && !delegateRoot.hiddenByOverflow
                     parent: appContainer
                     x: delegateRoot.x
                     y: delegateRoot.y
@@ -811,13 +816,61 @@ ContainmentItem {
             property string launcherDndWinId: ""
             property string pendingDockElement: ""
             property string pendingFolderUrl: ""
+            property var activeDragSource: null
 
-            function resetDndState() {
+            function resetDndState(clearPlaceholder) {
+                disconnectActiveDragSource()
+                if (clearPlaceholder === undefined || clearPlaceholder) {
+                    taskmanager.Applet.clearDockPlaceholder()
+                }
                 launcherDndDesktopId = ""
                 launcherDndDragSource = ""
                 launcherDndWinId = ""
                 pendingDockElement = ""
                 pendingFolderUrl = ""
+            }
+
+            function dragPointInside(drag) {
+                return drag
+                    && drag.x >= 0
+                    && drag.y >= 0
+                    && drag.x <= width
+                    && drag.y <= height
+            }
+
+            function canBindDragEnded(source) {
+                return source
+                    && source.dragEnded !== undefined
+                    && source.dragEnded !== null
+                    && source.dragEnded.connect !== undefined
+            }
+
+            function bindActiveDragSource(drag) {
+                disconnectActiveDragSource()
+                if (!drag || !canBindDragEnded(drag.source)) {
+                    return
+                }
+
+                activeDragSource = drag.source
+                activeDragSource.dragEnded.connect(handleSourceDragEnded)
+            }
+
+            function disconnectActiveDragSource() {
+                if (!canBindDragEnded(activeDragSource)) {
+                    activeDragSource = null
+                    return
+                }
+
+                try {
+                    activeDragSource.dragEnded.disconnect(handleSourceDragEnded)
+                } catch (error) {
+                    // The source can be destroyed by the time the dock clears a cancelled drag.
+                }
+                activeDragSource = null
+            }
+
+            function handleSourceDragEnded() {
+                resetDndState()
             }
 
             function dragString(drag, key) {
@@ -942,6 +995,7 @@ ContainmentItem {
                 launcherDndDesktopId = launcherDesktopIdFromDrag(drag)
                 pendingDockElement = dragString(drag, "text/x-dde-dock-dnd-element")
                 pendingFolderUrl = ""
+                bindActiveDragSource(drag)
 
                 if (launcherDndDragSource === "" && launcherDndDesktopId !== "") {
                     launcherDndDragSource = "launcher"
@@ -964,7 +1018,7 @@ ContainmentItem {
 
                 if (launcherDndDesktopId !== "") {
                     pendingDockElement = taskmanager.Applet.dockElementFromLauncherId(launcherDndDesktopId)
-                    if (pendingDockElement === "" || taskmanager.Applet.requestDockByDesktopId(launcherDndDesktopId) === false) {
+                    if (pendingDockElement === "" || taskmanager.Applet.stageDockPlaceholderByDesktopId(launcherDndDesktopId) === false) {
                         logDrag("taskmanager launcher drag rejected", drag)
                         drag.accepted = false
                         resetDndState()
@@ -978,7 +1032,7 @@ ContainmentItem {
                 if (folderUrl !== "") {
                     pendingFolderUrl = folderUrl
                     pendingDockElement = taskmanager.Applet.folderUrlToElementId(pendingFolderUrl)
-                    if (pendingDockElement === "" || taskmanager.Applet.requestDockByFolderUrl(pendingFolderUrl) === false) {
+                    if (pendingDockElement === "" || taskmanager.Applet.stageDockPlaceholderByFolderUrl(pendingFolderUrl) === false) {
                         logDrag("taskmanager folder drag rejected", drag)
                         drag.accepted = false
                         resetDndState()
@@ -995,6 +1049,11 @@ ContainmentItem {
 
             onPositionChanged: function(drag) {
                 if (pendingDockElement === "") return
+                if (!dragPointInside(drag)) {
+                    resetDndState()
+                    return
+                }
+
                 let targetIndex = appContainer.indexAt(drag.x, drag.y)
                 let currentIndex = currentDragIndex()
                 if (currentIndex !== -1 && targetIndex !== -1 && currentIndex !== targetIndex) {
@@ -1011,6 +1070,26 @@ ContainmentItem {
                 logDrag("taskmanager drag dropped", drop)
                 Panel.contextDragging = false
                 if (pendingDockElement === "") return
+
+                const externalDockDrop = launcherDndDragSource !== "taskbar"
+                if (externalDockDrop) {
+                    let dockAccepted = false
+                    if (launcherDndDesktopId !== "") {
+                        dockAccepted = taskmanager.Applet.requestDockByDesktopId(launcherDndDesktopId)
+                    } else if (pendingFolderUrl !== "") {
+                        dockAccepted = taskmanager.Applet.requestDockByFolderUrl(pendingFolderUrl)
+                    }
+
+                    if (!dockAccepted) {
+                        logDrag("taskmanager drag drop rejected", drop)
+                        drop.accepted = false
+                        resetDndState()
+                        return
+                    }
+
+                    taskmanager.Applet.commitDockPlaceholder()
+                }
+
                 drop.accepted = true
                 let targetIndex = appContainer.indexAt(drop.x, drop.y)
                 let currentIndex = currentDragIndex()
@@ -1024,21 +1103,24 @@ ContainmentItem {
                 }
                 let dockElements = []
                 for (let i = 0; i < visualModel.items.count; i++) {
-                    dockElements.push(visualModel.items.get(i).model.dockElement)
+                    const dockElement = visualModel.items.get(i).model.dockElement
+                    if (dockElement !== "" && dockElements.indexOf(dockElement) === -1) {
+                        dockElements.push(dockElement)
+                    }
                 }
                 taskmanager.Applet.saveDockElementsOrder(dockElements)
-                resetDndState()
+                resetDndState(false)
             }
 
             onExited: function(drag) {
                 logDrag("taskmanager drag exited", drag)
-                if (launcherDndDesktopId !== "" && launcherDndDragSource !== "taskbar") {
-                    taskmanager.Applet.requestUndockByDesktopId(launcherDndDesktopId)
-                }
-                if (pendingFolderUrl !== "" && launcherDndDragSource !== "taskbar") {
-                    taskmanager.Applet.requestUndockByFolderUrl(pendingFolderUrl)
-                }
                 resetDndState()
+            }
+
+            onContainsDragChanged: {
+                if (!containsDrag && pendingDockElement !== "") {
+                    resetDndState()
+                }
             }
         }
     }

@@ -77,7 +77,7 @@ void AbstractWindowMonitor::requestWindowsView(const QModelIndexList &indexes) c
 QVariant AbstractWindowMonitor::data(const QModelIndex &index, int role) const
 {
     auto pos = index.row();
-    if (pos >= m_trackedWindows.size())
+    if (pos < 0 || pos >= m_trackedWindows.size())
         return QVariant();
     auto window = m_trackedWindows[pos];
 
@@ -105,38 +105,52 @@ QVariant AbstractWindowMonitor::data(const QModelIndex &index, int role) const
 
 void AbstractWindowMonitor::trackWindow(AbstractWindow* window)
 {
-    beginInsertRows(QModelIndex(), m_trackedWindows.size(), m_trackedWindows.size());
+    const int row = m_trackedWindows.size();
+    beginInsertRows(QModelIndex(), row, row);
     m_trackedWindows.append(window);
+    m_trackedWindowRows.insert(window, row);
     endInsertRows();
 
     connect(window, &AbstractWindow::pidChanged, this, [this, window]() {
-        auto pos = m_trackedWindows.indexOf(window);
+        auto pos = m_trackedWindowRows.value(window, -1);
+        if (pos < 0)
+            return;
         auto modelIndex = index(pos);
         Q_EMIT dataChanged(modelIndex, modelIndex, {TaskManager::PidRole});
     });
     connect(window, &AbstractWindow::identityChanged, this, [this, window]() {
-        auto pos = m_trackedWindows.indexOf(window);
+        auto pos = m_trackedWindowRows.value(window, -1);
+        if (pos < 0)
+            return;
         auto modelIndex = index(pos);
         Q_EMIT dataChanged(modelIndex, modelIndex, {TaskManager::IdentityRole});
     });
     connect(window, &AbstractWindow::iconChanged, this, [this, window]() {
-        auto pos = m_trackedWindows.indexOf(window);
+        auto pos = m_trackedWindowRows.value(window, -1);
+        if (pos < 0)
+            return;
         auto modelIndex = index(pos);
         Q_EMIT dataChanged(modelIndex, modelIndex, {TaskManager::WinIconRole});
     });
     connect(window, &AbstractWindow::titleChanged, this, [this, window]() {
-        auto pos = m_trackedWindows.indexOf(window);
+        auto pos = m_trackedWindowRows.value(window, -1);
+        if (pos < 0)
+            return;
         auto modelIndex = index(pos);
         Q_EMIT dataChanged(modelIndex, modelIndex, {TaskManager::WinTitleRole});
     });
 
     connect(window, &AbstractWindow::stateChanged, this, [this, window]() {
-        auto pos = m_trackedWindows.indexOf(window);
+        auto pos = m_trackedWindowRows.value(window, -1);
+        if (pos < 0)
+            return;
         auto modelIndex = index(pos);
         Q_EMIT dataChanged(modelIndex, modelIndex, {TaskManager::ActiveRole, TaskManager::AttentionRole});
     });
     connect(window, &AbstractWindow::shouldSkipChanged, this, [this, window]() {
-        auto pos = m_trackedWindows.indexOf(window);
+        auto pos = m_trackedWindowRows.value(window, -1);
+        if (pos < 0)
+            return;
         auto modelIndex = index(pos);
         Q_EMIT dataChanged(modelIndex, modelIndex, {TaskManager::ShouldSkipRole});
     });
@@ -144,12 +158,16 @@ void AbstractWindowMonitor::trackWindow(AbstractWindow* window)
 
 void AbstractWindowMonitor::destroyWindow(AbstractWindow * window)
 {
-    auto pos = m_trackedWindows.indexOf(window);
+    auto pos = m_trackedWindowRows.value(window, -1);
     if (pos == -1)
         return;
 
     beginRemoveRows(QModelIndex(), pos, pos);
     m_trackedWindows.removeAt(pos);
+    m_trackedWindowRows.remove(window);
+    for (int i = pos; i < m_trackedWindows.size(); ++i) {
+        m_trackedWindowRows.insert(m_trackedWindows.at(i), i);
+    }
     endRemoveRows();
 }
 

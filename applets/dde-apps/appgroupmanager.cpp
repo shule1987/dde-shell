@@ -8,6 +8,8 @@
 #include "amappitemmodel.h"
 #include "amappitem.h"
 
+#include <QSet>
+
 #define TOPLEVEL_FOLDERID 0
 
 namespace apps {
@@ -42,16 +44,16 @@ AppGroupManager::AppGroupManager(AMAppItemModel * referenceModel, QObject *paren
 
     connect(m_referenceModel, &AMAppItemModel::rowsInserted, this, [this](){
         onReferenceModelChanged();
-        saveAppGroupInfo();
+        scheduleSaveAppGroupInfo();
     });
     connect(m_referenceModel, &AMAppItemModel::rowsRemoved, this, [this](){
         onReferenceModelChanged();
-        saveAppGroupInfo();
+        scheduleSaveAppGroupInfo();
     });
     connect(m_dumpTimer, &QTimer::timeout, this, [this](){
         saveAppGroupInfo();
     });
-    connect(this, &AppGroupManager::dataChanged, this, &AppGroupManager::saveAppGroupInfo);
+    connect(this, &AppGroupManager::dataChanged, this, &AppGroupManager::scheduleSaveAppGroupInfo);
 }
 
 QVariant AppGroupManager::data(const QModelIndex &index, int role) const
@@ -324,19 +326,35 @@ void AppGroupManager::onReferenceModelChanged()
         return;
     }
 
+    QSet<QString> arrangedAppSet;
+    for (int i = 0; i < rowCount(); ++i) {
+        auto folder = group(index(i, 0));
+        if (!folder || !folder->itemsPage()) {
+            continue;
+        }
+
+        const QStringList items = folder->itemsPage()->allArrangedItems();
+        arrangedAppSet.reserve(arrangedAppSet.size() + items.size());
+        for (const QString &item : items) {
+            arrangedAppSet.insert(item);
+        }
+    }
+
     QSet<QString> appSet;
-    for (int i = 0; i < m_referenceModel->rowCount(); i++) {
+    const int referenceRowCount = m_referenceModel->rowCount();
+    appSet.reserve(referenceRowCount);
+    for (int i = 0; i < referenceRowCount; i++) {
         const auto modelIndex = m_referenceModel->index(i, 0);
         const bool noDisplay = m_referenceModel->data(modelIndex, AppItemModel::NoDisplayRole).toBool();
         if (noDisplay) {
             continue;
         }
-        const QString & desktopId = m_referenceModel->data(m_referenceModel->index(i, 0), AppItemModel::DesktopIdRole).toString();
+        const QString & desktopId = m_referenceModel->data(modelIndex, AppItemModel::DesktopIdRole).toString();
         appSet.insert(desktopId);
         // add all existing ones if they are not already in
-        ItemPosition itemPos = findItem(desktopId);
-        if (itemPos.group() == -1) {
+        if (!arrangedAppSet.contains(desktopId)) {
             appendItemToGroup(desktopId, TOPLEVEL_FOLDERID);
+            arrangedAppSet.insert(desktopId);
         }
     }
 
@@ -433,6 +451,11 @@ void AppGroupManager::loadAppGroupInfo()
     }
 }
 
+void AppGroupManager::scheduleSaveAppGroupInfo()
+{
+    m_dumpTimer->start();
+}
+
 void AppGroupManager::saveAppGroupInfo()
 {
     QVariantList list;
@@ -450,10 +473,11 @@ void AppGroupManager::saveAppGroupInfo()
 
 QString AppGroupManager::assignGroupId() const
 {
-    QStringList knownGroupIds;
+    QSet<QString> knownGroupIds;
+    knownGroupIds.reserve(rowCount());
     for (int i = 0; i < rowCount(); i++) {
         auto group = index(i, 0);
-        knownGroupIds.append(AppGroup::normalizeGroupId(group.data(AppItemModel::DesktopIdRole).toString()));
+        knownGroupIds.insert(AppGroup::normalizeGroupId(group.data(AppItemModel::DesktopIdRole).toString()));
     }
 
     int idNumber = 0;

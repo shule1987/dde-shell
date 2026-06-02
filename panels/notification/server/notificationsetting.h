@@ -6,6 +6,7 @@
 
 #include <QMutex>
 #include <QObject>
+#include <QHash>
 #include <QTimer>
 #include <QVariantMap>
 
@@ -90,6 +91,7 @@ private:
     Dtk::Core::DConfig *m_impl = nullptr;
     QAbstractItemModel *m_appAccessor = nullptr;
     QList<AppItem> m_appItems;
+    QHash<QString, AppItem> m_appItemById;
     QMutex m_appItemsMutex;
     QVariantMap m_appsInfo;
     QMutex m_appsInfoMutex;

@@ -17,109 +17,149 @@ Item {
     property bool hovered: hoverHandler.hovered
     property bool pressed: tapHandler.pressed
     property int cursorShape: Qt.ArrowCursor
-    property alias shellSurfaceItem: impl
+    property Item shellSurfaceItem: surfaceLoader.item ? surfaceLoader.item : fallbackSurfaceItem
+    property bool surfaceItemEnabled: true
     
     implicitWidth: shellSurface ? shellSurface.width : 10
     implicitHeight: shellSurface ? shellSurface.height : 10
 
     function takeFocus() {
-        impl.takeFocus()
+        if (surfaceLoader.item) {
+            surfaceLoader.item.takeFocus()
+        }
     }
 
     function fixPosition() {
         fixPositionTimer.start()
     }
 
-    ShellSurfaceItem {
-        id: impl
-        width: parent.width
-        height: parent.height
-        shellSurface: root.shellSurface
-        inputEventsEnabled: root.inputEventsEnabled
-        // we need to set smooth to false, otherwise the image
-        // will be blurred if the scale is 1.25.
-        // If the surface width is 150, the buffer width will be 150 * 1.25 = 188
-        // But the ShellSurfaceItem pixel width on screen is 150 * 1.25 = 187.5
-        // So Qt will use the 188 to scale to 187.5, which will be blurred.
-        // But if we set smooth to false, the Qt doesn't linear interpolation.
-        // TODO: If the buffer size greater than the ShellSurfaceItem pixel
-        // size, we also need enable smooth.
-        smooth: false
+    Item {
+        id: fallbackSurfaceItem
+        anchors.fill: parent
+        visible: false
+    }
 
-        HoverHandler {
-            id: hoverHandler
-            cursorShape: root.cursorShape
-        }
-        TapHandler {
-            id: tapHandler
-        }
+    Loader {
+        id: surfaceLoader
+        anchors.fill: parent
+        active: root.surfaceItemEnabled && root.shellSurface
+        sourceComponent: shellSurfaceComponent
 
-        onVisibleChanged: function () {
-            if (visible) {
-                fixPositionTimer.start()
+        onLoaded: {
+            if (!item) {
+                return
             }
 
-            if (autoClose && !visible) {
-                // surface is valid but client's shellSurface maybe invalid.
-                Qt.callLater(closeShellSurface)
+            item.surfaceDestroyed.connect(root.surfaceDestroyed)
+            item.fixPosition()
+        }
+    }
+
+    Component {
+        id: shellSurfaceComponent
+
+        ShellSurfaceItem {
+            width: root.width
+            height: root.height
+            shellSurface: root.shellSurface
+            inputEventsEnabled: root.inputEventsEnabled
+            // we need to set smooth to false, otherwise the image
+            // will be blurred if the scale is 1.25.
+            // If the surface width is 150, the buffer width will be 150 * 1.25 = 188
+            // But the ShellSurfaceItem pixel width on screen is 150 * 1.25 = 187.5
+            // So Qt will use the 188 to scale to 187.5, which will be blurred.
+            // But if we set smooth to false, the Qt doesn't linear interpolation.
+            // TODO: If the buffer size greater than the ShellSurfaceItem pixel
+            // size, we also need enable smooth.
+            smooth: false
+
+            onVisibleChanged: function () {
+                if (visible) {
+                    fixPositionTimer.start()
+                }
+
+                if (root.autoClose && !visible) {
+                    // surface is valid but client's shellSurface maybe invalid.
+                    Qt.callLater(closeShellSurface)
+                }
             }
-        }
-        function closeShellSurface()
-        {
-            if (surface && shellSurface) {
-                DockCompositor.closeShellSurface(shellSurface)
+            function closeShellSurface()
+            {
+                if (surface && shellSurface) {
+                    DockCompositor.closeShellSurface(shellSurface)
+                }
             }
-        }
 
-        function mapToScene(x, y) {
-            const point = Qt.point(x, y)
-            // Must use parent.mapFoo, because the impl's position is relative to the parent Item
-            const mappedPoint = parent.mapToItem(Window.window.contentItem, point)
-            return mappedPoint
-        }
+            function mapToScene(x, y) {
+                if (!parent || !Window.window || !Window.window.contentItem) {
+                    return Qt.point(x, y)
+                }
 
-        function mapFromScene(x, y) {
-            const point = Qt.point(x, y)
-            // Must use parent.mapFoo, because the impl's position is relative to the parent Item
-            const mappedPoint = parent.mapFromItem(Window.window.contentItem, point)
-            return mappedPoint
-        }
+                const point = Qt.point(x, y)
+                // Must use parent.mapFoo, because the item's position is relative to the parent Item
+                const mappedPoint = parent.mapToItem(Window.window.contentItem, point)
+                return mappedPoint
+            }
 
-        function fixPosition() {
-            // See QTBUG: https://bugreports.qt.io/browse/QTBUG-135833
-            // Snap to the nearest physical pixel to avoid one-pixel seams between
-            // QML-painted items and shell-surface items in the dock.
-            const scenePoint = mapToScene(0, 0)
-            const snappedX = Math.round(scenePoint.x * Panel.devicePixelRatio) / Panel.devicePixelRatio
-            const snappedY = Math.round(scenePoint.y * Panel.devicePixelRatio) / Panel.devicePixelRatio
-            x = mapFromScene(snappedX, scenePoint.y).x
-            y = mapFromScene(scenePoint.x, snappedY).y
-        }
+            function mapFromScene(x, y) {
+                if (!parent || !Window.window || !Window.window.contentItem) {
+                    return Qt.point(x, y)
+                }
 
-        Timer {
-            id: fixPositionTimer
-            interval: 100
-            repeat: false
-            running: false
-            onTriggered: {
-                impl.fixPosition()
+                const point = Qt.point(x, y)
+                // Must use parent.mapFoo, because the item's position is relative to the parent Item
+                const mappedPoint = parent.mapFromItem(Window.window.contentItem, point)
+                return mappedPoint
+            }
+
+            function fixPosition() {
+                if (!parent || !Window.window || !Window.window.contentItem) {
+                    return
+                }
+
+                // See QTBUG: https://bugreports.qt.io/browse/QTBUG-135833
+                // Snap to the nearest physical pixel to avoid one-pixel seams between
+                // QML-painted items and shell-surface items in the dock.
+                const scenePoint = mapToScene(0, 0)
+                const snappedX = Math.round(scenePoint.x * Panel.devicePixelRatio) / Panel.devicePixelRatio
+                const snappedY = Math.round(scenePoint.y * Panel.devicePixelRatio) / Panel.devicePixelRatio
+                x = mapFromScene(snappedX, scenePoint.y).x
+                y = mapFromScene(scenePoint.x, snappedY).y
             }
         }
     }
-    Component.onCompleted: function () {
-        impl.surfaceDestroyed.connect(root.surfaceDestroyed)
+
+    HoverHandler {
+        id: hoverHandler
+        parent: root.shellSurfaceItem
+        cursorShape: root.cursorShape
+    }
+    TapHandler {
+        id: tapHandler
+        parent: root.shellSurfaceItem
+    }
+
+    Timer {
+        id: fixPositionTimer
+        interval: 100
+        repeat: false
+        running: false
+        onTriggered: {
+            if (surfaceLoader.item) {
+                surfaceLoader.item.fixPosition()
+            }
+        }
     }
 
     Connections {
         target: shellSurface
+        ignoreUnknownSignals: true
         // TODO it's maybe a bug for qt, we force shellSurface's value to update
         function onAboutToDestroy()
         {
+            root.surfaceItemEnabled = false
             Qt.callLater(function() {
-                impl.shellSurface = null
-                impl.shellSurface = Qt.binding(function () {
-                    return root.shellSurface
-                })
+                root.surfaceItemEnabled = true
             })
         }
 

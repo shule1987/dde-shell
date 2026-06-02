@@ -43,6 +43,11 @@ static QPair<QString, QString> splitDockElement(const QString &dockElement)
     return {dockElement.left(separatorIndex), dockElement.mid(separatorIndex + 1)};
 }
 
+static QString dockElementKey(const QString &type, const QString &id)
+{
+    return type + QLatin1Char('/') + id;
+}
+
 static QString localizedDesktopEntryText(QSettings &settings, const QString &key)
 {
     if (key.isEmpty()) {
@@ -602,7 +607,7 @@ DockGlobalElementModel::DockGlobalElementModel(QAbstractItemModel *appsModel,
 
                 if (type == QStringLiteral("desktop") &&
                     oit == m_data.constEnd() &&
-                    m_dockedElements.contains(std::make_tuple(QStringLiteral("desktop"), id))) {
+                    m_dockedElementKeys.contains(dockElementKey(QStringLiteral("desktop"), id))) {
                     auto res = m_appsModel->match(m_appsModel->index(0, 0), TaskManager::DesktopIdRole, id, 1, Qt::MatchExactly);
                     if (res.isEmpty()) {
                         beginRemoveRows(QModelIndex(), pos, pos);
@@ -678,6 +683,7 @@ QHash<int, QByteArray> DockGlobalElementModel::roleNames() const
         {TaskManager::DockElementRole, "dockElement"},
         {TaskManager::ItemKindRole, "itemKind"},
         {TaskManager::PreviewIconsRole, "previewIcons"},
+        {TaskManager::DropPlaceholderRole, "dropPlaceholder"},
         {TaskManager::NameRole, MODEL_NAME},
         {TaskManager::IconNameRole, MODEL_ICONNAME},
         {TaskManager::ActiveRole, MODEL_ACTIVE},
@@ -719,6 +725,29 @@ QString DockGlobalElementModel::dockElementForRow(int row) const
     return QStringLiteral("%1/%2").arg(std::get<0>(data), std::get<1>(data));
 }
 
+int DockGlobalElementModel::rowForDockElement(const QString &type, const QString &id) const
+{
+    if (type.isEmpty() || id.isEmpty()) {
+        return -1;
+    }
+
+    for (int i = 0; i < m_data.size(); ++i) {
+        const auto &data = m_data.at(i);
+        if (std::get<0>(data) == type && std::get<1>(data) == id) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+bool DockGlobalElementModel::isDropPlaceholderRow(int row) const
+{
+    return m_dropPlaceholderInserted
+           && !m_dropPlaceholderElement.isEmpty()
+           && dockElementForRow(row) == m_dropPlaceholderElement;
+}
+
 QString DockGlobalElementModel::displayNameFor(const QString &type, const QString &id) const
 {
     if (type == QStringLiteral("group")) {
@@ -755,6 +784,87 @@ QString DockGlobalElementModel::iconNameFor(const QString &type, const QString &
     return QString::fromLatin1(DEFAULT_APP_ICONNAME);
 }
 
+bool DockGlobalElementModel::setDropPlaceholderElement(const QString &dockElement)
+{
+    const auto [type, id] = splitDockElement(dockElement);
+    if (type.isEmpty() || id.isEmpty()) {
+        return false;
+    }
+
+    if (m_dropPlaceholderElement == dockElement) {
+        return true;
+    }
+
+    clearDropPlaceholder();
+
+    const int existingRow = rowForDockElement(type, id);
+    if (existingRow >= 0) {
+        m_dropPlaceholderElement = dockElement;
+        m_dropPlaceholderInserted = false;
+        return true;
+    }
+
+    QAbstractItemModel *model = nullptr;
+    int sourceRow = -1;
+    if (type == QStringLiteral("desktop")) {
+        const QModelIndex sourceIndex = findIndexByNamedRole(m_appsModel, MODEL_DESKTOPID, id, TaskManager::DesktopIdRole);
+        if (!sourceIndex.isValid()) {
+            return false;
+        }
+        model = m_appsModel;
+        sourceRow = sourceIndex.row();
+    } else if (type != QStringLiteral("group") && type != QStringLiteral("folder")) {
+        return false;
+    }
+
+    const int insertRow = m_data.size();
+    beginInsertRows(QModelIndex(), insertRow, insertRow);
+    m_data.append(std::make_tuple(type, id, model, sourceRow));
+    m_dropPlaceholderElement = dockElement;
+    m_dropPlaceholderInserted = true;
+    endInsertRows();
+    return true;
+}
+
+void DockGlobalElementModel::commitDropPlaceholder()
+{
+    if (m_dropPlaceholderElement.isEmpty()) {
+        return;
+    }
+
+    const auto [type, id] = splitDockElement(m_dropPlaceholderElement);
+    const int row = rowForDockElement(type, id);
+    m_dropPlaceholderElement.clear();
+    m_dropPlaceholderInserted = false;
+
+    if (row >= 0) {
+        Q_EMIT dataChanged(index(row, 0),
+                           index(row, 0),
+                           {TaskManager::DropPlaceholderRole,
+                            TaskManager::DockedRole,
+                            TaskManager::MenusRole});
+    }
+}
+
+void DockGlobalElementModel::clearDropPlaceholder()
+{
+    if (m_dropPlaceholderElement.isEmpty()) {
+        return;
+    }
+
+    const auto [type, id] = splitDockElement(m_dropPlaceholderElement);
+    const int row = rowForDockElement(type, id);
+    const bool removeInsertedPlaceholder = m_dropPlaceholderInserted && row >= 0;
+    m_dropPlaceholderElement.clear();
+    m_dropPlaceholderInserted = false;
+
+    if (removeInsertedPlaceholder) {
+        beginRemoveRows(QModelIndex(), row, row);
+        m_data.removeAt(row);
+        endRemoveRows();
+    }
+}
+
 QStringList DockGlobalElementModel::previewIconsFor(const QString &type, const QString &id) const
 {
     if (type == QStringLiteral("group")) {
@@ -789,12 +899,14 @@ void DockGlobalElementModel::initDockedElements(bool unused)
 void DockGlobalElementModel::loadDockedElements()
 {
     QList<std::tuple<QString, QString>> newDocked;
+    QSet<QString> newDockedKeys;
     for (auto elementInfo : TaskManagerSettings::instance()->dockedElements()) {
         const auto [type, id] = splitDockElement(elementInfo);
         if (type.isEmpty() || id.isEmpty())
             continue;
 
         auto tmp = std::make_tuple(type, id);
+        const QString tmpKey = dockElementKey(type, id);
 
         QAbstractItemModel *model = nullptr;
         int row = -1;
@@ -814,7 +926,8 @@ void DockGlobalElementModel::loadDockedElements()
         }
 
         newDocked.append(tmp);
-        if (m_dockedElements.contains(tmp))
+        newDockedKeys.insert(tmpKey);
+        if (m_dockedElementKeys.contains(tmpKey))
             continue;
 
         auto isRunning = std::any_of(m_data.constBegin(), m_data.constEnd(), [&type, &id](const auto &data) {
@@ -829,9 +942,9 @@ void DockGlobalElementModel::loadDockedElements()
     }
 
     for (auto it = m_dockedElements.begin(); it < m_dockedElements.end(); ++it) {
-        if (newDocked.contains(*it))
-            continue;
         auto type = std::get<0>(*it), id = std::get<1>(*it);
+        if (newDockedKeys.contains(dockElementKey(type, id)))
+            continue;
         auto dataIt = std::find_if(m_data.begin(), m_data.end(), [this, &type, &id](const auto &data) {
             if (std::get<0>(data) != type || std::get<1>(data) != id) {
                 return false;
@@ -852,6 +965,7 @@ void DockGlobalElementModel::loadDockedElements()
     }
 
     m_dockedElements = newDocked;
+    m_dockedElementKeys = newDockedKeys;
 
     qCDebug(dockGlobalElementModelLog) << "loaded docked elements count:" << m_dockedElements.count() << "appsModel row count:" << m_appsModel->rowCount();
 
@@ -895,7 +1009,7 @@ QString DockGlobalElementModel::getMenus(const QModelIndex &index) const
         }
     }
 
-    bool isDocked = m_dockedElements.contains(std::make_tuple(type, id));
+    bool isDocked = m_dockedElementKeys.contains(dockElementKey(type, id));
     if (type == QStringLiteral("folder")) {
         menusArray.append(QJsonObject{{"id", DOCK_ACTION_OPEN_IN_FILEMANAGER}, {"name", tr("Open in File Manager")}});
     }
@@ -939,6 +1053,8 @@ QVariant DockGlobalElementModel::data(const QModelIndex &index, int role) const
         return dockElementForRow(index.row());
     case TaskManager::ItemKindRole:
         return type;
+    case TaskManager::DropPlaceholderRole:
+        return isDropPlaceholderRow(index.row());
     case TaskManager::PreviewIconsRole:
         return previewIconsFor(type, id);
     case TaskManager::WindowsRole: {

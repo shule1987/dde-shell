@@ -7,6 +7,7 @@
 #include "constants.h"
 #include <QQmlEngine>
 #include <QStandardItemModel>
+#include <QSet>
 
 namespace Dtk {
 namespace Core {
@@ -93,6 +94,7 @@ private:
     std::unique_ptr<Dtk::Core::DConfig> m_dconfig;
     // this is for the plugins that currently available.
     QList<QVariantMap> m_availableSurfaces;
+    QSet<QString> m_availableSurfaceIdSet;
     // these are the sort order data source, it might contain items that are no longer existed.
     QStringList m_stashedIds;
     QStringList m_collapsableIds;
@@ -100,8 +102,10 @@ private:
     QStringList m_fixedIds;
     // surface IDs that should be invisible/hidden from the tray area.
     QStringList m_hiddenIds;
+    QSet<QString> m_hiddenIdSet;
     // surface IDs that should be hidden from dock tray but keep VisibilityRole true.
     QStringList m_dockHiddenIds;
+    QSet<QString> m_dockHiddenIdSet;
     
     // Staged drop state for drag preview
     QString m_stagedSurfaceId;

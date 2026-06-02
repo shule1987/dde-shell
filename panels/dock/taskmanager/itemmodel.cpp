@@ -170,11 +170,7 @@ void ItemModel::requestUpdateWindowIconGeometry(const QModelIndex &index, const 
 
 QPointer<AbstractItem> ItemModel::getItemById(const QString& id) const
 {
-    auto it = std::find_if(m_items.begin(), m_items.end(),[id](QPointer<AbstractItem> item){
-        return item->id() == id;
-    });
-
-    return it == m_items.end() ? nullptr : *it;
+    return m_itemById.value(id, nullptr);
 }
 
 void ItemModel::addItem(QPointer<AbstractItem> item)
@@ -190,21 +186,32 @@ void ItemModel::addItem(QPointer<AbstractItem> item)
     connect(item.get(), &AbstractItem::dockedChanged, this, &ItemModel::onItemChanged, Qt::UniqueConnection);
     connect(item.get(), &AbstractItem::dataChanged, this, &ItemModel::onItemChanged, Qt::UniqueConnection);
 
-    beginInsertRows(QModelIndex(), rowCount(), rowCount());
+    const int row = rowCount();
+    beginInsertRows(QModelIndex(), row, row);
     m_items.append(item);
+    m_itemById.insert(item->id(), item);
+    m_itemRows.insert(item.get(), row);
     endInsertRows();
 }
 
 void ItemModel::onItemDestroyed()
 {
     auto item = qobject_cast<AbstractItem*>(sender());
-    auto beginIndex = m_items.indexOf(item);
-    auto lastIndex = m_items.lastIndexOf(item);
+    auto beginIndex = m_itemRows.value(item, -1);
+    auto lastIndex = beginIndex;
 
     if (beginIndex == -1 || lastIndex == -1) return;
 
     beginRemoveRows(QModelIndex(), beginIndex, lastIndex);
-    m_items.removeAll(item);
+    const auto itemId = item->id();
+    m_items.removeAt(beginIndex);
+    m_itemById.remove(itemId);
+    m_itemRows.remove(item);
+    for (int i = beginIndex; i < m_items.size(); ++i) {
+        if (m_items.at(i)) {
+            m_itemRows.insert(m_items.at(i).get(), i);
+        }
+    }
     endRemoveRows();
 }
 
@@ -212,8 +219,10 @@ void ItemModel::onItemChanged()
 {
     auto item = qobject_cast<AbstractItem*>(sender());
     if (!item) return;
-    QModelIndexList indexes = match(index(0, 0, QModelIndex()),
-                                    ItemModel::ItemIdRole, item->id(), 1, Qt::MatchExactly);
-    Q_EMIT dataChanged(indexes.first(), indexes.last());
+    const int row = m_itemRows.value(item, -1);
+    if (row < 0) return;
+
+    const auto modelIndex = index(row, 0);
+    Q_EMIT dataChanged(modelIndex, modelIndex);
 }
 }

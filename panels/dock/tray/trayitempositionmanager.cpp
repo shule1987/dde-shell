@@ -197,6 +197,11 @@ int TrayItemPositionManager::dockHeight() const
     return m_dockHeight;
 }
 
+void TrayItemPositionManager::refreshVisualSize()
+{
+    updateVisualSize();
+}
+
 // This should only be used to check layout issue or workaround layout issues.
 // Do NOT rely on this to correct layout issue in a long run!
 void TrayItemPositionManager::layoutHealthCheck(int delayMs)

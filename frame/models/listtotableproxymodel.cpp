@@ -22,14 +22,40 @@ ListToTableProxyModel::ListToTableProxyModel(QObject *parent)
             QByteArray roleName(sourceModel() ? sourceModel()->roleNames().value(role, fallbackName) : fallbackName);
             setExtraColumnTitle(idx, QString(roleName));
         }
+
+        connectSourceDataChanged();
     });
 
-    connect(this, &ListToTableProxyModel::dataChanged, this,
-            [this](const QModelIndex &, const QModelIndex &,
-                   const QList<int> &){
-        // TODO: lazy solution, we should use dataChanged() to notify extra column changed;
-        beginResetModel();
-        endResetModel();
+    connectSourceDataChanged();
+}
+
+void ListToTableProxyModel::connectSourceDataChanged()
+{
+    if (m_sourceDataChangedConnection) {
+        disconnect(m_sourceDataChangedConnection);
+    }
+
+    if (!sourceModel()) {
+        return;
+    }
+
+    m_sourceDataChangedConnection = connect(sourceModel(),
+                                            &QAbstractItemModel::dataChanged,
+                                            this,
+                                            [this](const QModelIndex &topLeft, const QModelIndex &bottomRight, const QList<int> &roles) {
+        if (!topLeft.isValid() || !bottomRight.isValid()) {
+            return;
+        }
+
+        for (int extraColumn = 0; extraColumn < m_roles.count(); ++extraColumn) {
+            if (!roles.isEmpty() && !roles.contains(m_roles.at(extraColumn))) {
+                continue;
+            }
+
+            const QModelIndex first = index(topLeft.row(), proxyColumnForExtraColumn(extraColumn), topLeft.parent());
+            const QModelIndex last = index(bottomRight.row(), proxyColumnForExtraColumn(extraColumn), bottomRight.parent());
+            Q_EMIT dataChanged(first, last, { Qt::DisplayRole });
+        }
     });
 }
 

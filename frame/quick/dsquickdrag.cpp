@@ -6,6 +6,7 @@
 
 #include <QLoggingCategory>
 #include <QCoreApplication>
+#include <QCursor>
 #include <QPointer>
 #include <private/qguiapplication_p.h>
 #include <qpa/qplatformintegration.h>
@@ -283,10 +284,12 @@ void DQuickDragPrivate::releaseDragOverlay()
 
 void DQuickDragPrivate::updateOverlayPosition(const QPoint &pos)
 {
+    Q_UNUSED(pos)
+
     if (!m_window)
         return;
 
-    m_window->setPosition(pos - hotSpot());
+    m_window->setPosition(QCursor::pos() - hotSpot());
     updateCurrentDragPoint();
 }
 
@@ -295,8 +298,7 @@ void DQuickDragPrivate::updateStartDragPoint()
     if (!m_window)
         return;
 
-    const auto pos = m_window->position();
-    m_startDragPoint = pos - hotSpot();
+    m_startDragPoint = m_window->position();
 
     D_Q(DQuickDrag);
     emit q->startDragPointChanged();

@@ -4,6 +4,7 @@
 
 #include "memoryaccessor.h"
 #include <QDebug>
+#include <QSet>
 #include <limits>
 
 namespace notification
@@ -119,16 +120,35 @@ QList<NotifyEntity> MemoryAccessor::fetchEntities(const QString &appName, int pr
     return ret;
 }
 
+QList<NotifyEntity> MemoryAccessor::fetchLastEntitiesByApps(int processedType, int maxCount)
+{
+    QMutexLocker locker(&m_mutex);
+    QList<NotifyEntity> ret;
+    QSet<QString> seenApps;
+    for (auto it = m_entities.crbegin(); it != m_entities.crend(); ++it) {
+        if (maxCount >= 0 && ret.count() >= maxCount) {
+            break;
+        }
+        if (it->processedType() != processedType || seenApps.contains(it->appName())) {
+            continue;
+        }
+
+        seenApps.insert(it->appName());
+        ret.append(*it);
+    }
+    return ret;
+}
+
 QList<QString> MemoryAccessor::fetchApps(int maxCount) const
 {
     QMutexLocker locker(&m_mutex);
     QList<QString> ret;
     for (const auto &item : m_entities) {
+        if (maxCount >= 0 && ret.count() >= maxCount)
+            break;
         if (!ret.contains(item.appName())) {
             ret.append(item.appName());
         }
-        if (maxCount >= 0 && ret.count() > maxCount)
-            break;
     }
     return ret;
 }

@@ -28,6 +28,7 @@ BubbleModel::BubbleModel(QObject *parent)
     m_updateTimeTipTimer->setInterval(1000);
     m_updateTimeTipTimer->setSingleShot(false);
     BubbleMaxCount = NotifySetting::instance()->bubbleCount();
+    m_contentRowCount = NotifySetting::instance()->contentRowCount();
 
     connect(m_updateTimeTipTimer, &QTimer::timeout, this, &BubbleModel::updateBubbleTimeTip);
     connect(NotifySetting::instance(), &NotifySetting::contentRowCountChanged, this, &BubbleModel::updateContentRowCount);
@@ -125,9 +126,10 @@ void BubbleModel::remove(const BubbleItem *bubble)
 
 BubbleItem *BubbleModel::removeById(qint64 id)
 {
-    for (const auto &item : m_bubbles) {
+    for (int i = 0; i < m_bubbles.size(); ++i) {
+        auto item = m_bubbles.at(i);
         if (item->id() == id) {
-            remove(m_bubbles.indexOf(item));
+            remove(i);
             return item;
         }
     }
@@ -183,7 +185,7 @@ QVariant BubbleModel::data(const QModelIndex &index, int role) const
     case BubbleModel::Urgency:
         return m_bubbles[row]->urgency();
     case BubbleModel::ContentRowCount:
-        return NotifySetting::instance()->contentRowCount();
+        return m_contentRowCount;
     default:
         break;
     }
@@ -288,17 +290,31 @@ void BubbleModel::updateBubbleTimeTip()
         return;
     }
 
-    for (auto item : m_bubbles) {
+    const int visibleCount = displayRowCount();
+    int firstChanged = -1;
+    int lastChanged = -1;
+
+    for (int row = 0; row < visibleCount; ++row) {
+        auto item = m_bubbles.at(row);
         qint64 diff = QDateTime::currentMSecsSinceEpoch() - item->ctime();
         diff /= 1000; // secs
         if (diff >= 60) {
-            QString timeTip;
-            timeTip = tr("%1 minutes ago").arg(diff / 60);
+            const QString timeTip = tr("%1 minutes ago").arg(diff / 60);
+            if (item->timeTip() == timeTip) {
+                continue;
+            }
+
             item->setTimeTip(timeTip);
+            if (firstChanged < 0) {
+                firstChanged = row;
+            }
+            lastChanged = row;
         };
     }
 
-    Q_EMIT dataChanged(index(0), index(m_bubbles.size() - 1), {BubbleModel::TimeTip});
+    if (firstChanged >= 0) {
+        Q_EMIT dataChanged(index(firstChanged), index(lastChanged), {BubbleModel::TimeTip});
+    }
 }
 
 void BubbleModel::updateContentRowCount(int rowCount)
@@ -308,8 +324,9 @@ void BubbleModel::updateContentRowCount(int rowCount)
 
     m_contentRowCount = rowCount;
 
-    if (!m_bubbles.isEmpty()) {
-        Q_EMIT dataChanged(index(0), index(m_bubbles.size() - 1), {BubbleModel::ContentRowCount});
+    const int visibleCount = displayRowCount();
+    if (visibleCount > 0) {
+        Q_EMIT dataChanged(index(0), index(visibleCount - 1), {BubbleModel::ContentRowCount});
     }
 }
 }

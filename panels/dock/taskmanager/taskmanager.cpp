@@ -32,6 +32,7 @@
 #include <QMetaObject>
 #include <QMimeDatabase>
 #include <QProcess>
+#include <QSet>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QStringLiteral>
@@ -171,8 +172,10 @@ static QModelIndex tryMatchByApplicationManager(const QStringList &identifies,
 static QStringList filteredIdentityCandidates(const QStringList &identifies, bool allowNumeric)
 {
     QStringList filtered;
+    QSet<QString> seen;
+    seen.reserve(identifies.size());
     for (const QString &identity : identifies) {
-        if (identity.isEmpty() || filtered.contains(identity)) {
+        if (identity.isEmpty() || seen.contains(identity)) {
             continue;
         }
 
@@ -182,6 +185,7 @@ static QStringList filteredIdentityCandidates(const QStringList &identifies, boo
             continue;
         }
 
+        seen.insert(identity);
         filtered.append(identity);
     }
 
@@ -1230,7 +1234,7 @@ void TaskManager::handleWindowAdded(QPointer<AbstractWindow> window)
     QSharedPointer<DesktopfileAbstractParser> desktopfile = nullptr;
     QString desktopId;
     if (res.size() > 0) {
-        desktopId = res.first().data(m_activeAppModel->roleNames().key("desktopId")).toString();
+        desktopId = res.first().data(TaskManager::DesktopIdRole).toString();
         qCDebug(taskManagerLog()) << "identify by model:" << desktopId;
     }
 
@@ -1358,6 +1362,98 @@ QString TaskManager::folderUrlToElementId(const QString &folderUrl) const
     }
 
     return QStringLiteral("folder/%1").arg(folderPath);
+}
+
+bool TaskManager::stageDockPlaceholderByDesktopId(const QString& desktopID)
+{
+    if (!m_dockGlobalElementModel) {
+        return false;
+    }
+
+    if (isLauncherFolderId(desktopID)) {
+        if (!m_launcherGroupModel) {
+            qCWarning(taskManagerLog) << "reject launcher group placeholder due to missing model" << desktopID;
+            return false;
+        }
+
+        const QString resolvedGroupId = resolveLauncherGroupId(m_launcherGroupModel, desktopID);
+        if (isLauncherRootFolderId(resolvedGroupId)) {
+            qCWarning(taskManagerLog) << "reject launcher group placeholder due to root group" << desktopID << resolvedGroupId;
+            return false;
+        }
+
+        const QString dockElement = dockElementFromLauncherId(desktopID);
+        if (dockElement.isEmpty() || Settings->isDocked(dockElement)) {
+            qCWarning(taskManagerLog) << "reject launcher group placeholder due to empty/already docked element"
+                                      << desktopID << resolvedGroupId << dockElement;
+            return false;
+        }
+
+        const QModelIndex groupIndex = findIndexByNamedRole(m_launcherGroupModel,
+                                                            MODEL_DESKTOPID,
+                                                            resolvedGroupId,
+                                                            DesktopIdRole);
+        if (!groupIndex.isValid()) {
+            qCWarning(taskManagerLog) << "reject launcher group placeholder due to invalid group index"
+                                      << desktopID << resolvedGroupId;
+            return false;
+        }
+
+        return m_dockGlobalElementModel->setDropPlaceholderElement(dockElement);
+    }
+
+    if (desktopID.startsWith(QStringLiteral("internal/"))) {
+        return false;
+    }
+
+    const QString appId = desktopIdToAppId(desktopID);
+    if (IsDocked(appId)) {
+        qCWarning(taskManagerLog) << "reject app placeholder because already docked" << desktopID << appId;
+        return false;
+    }
+
+    return m_dockGlobalElementModel->setDropPlaceholderElement(QStringLiteral("desktop/%1").arg(appId));
+}
+
+bool TaskManager::stageDockPlaceholderByFolderUrl(const QString &folderUrl)
+{
+    if (!m_dockGlobalElementModel) {
+        return false;
+    }
+
+    const QString folderPath = normalizedFolderPath(folderUrl);
+    if (folderPath.isEmpty()) {
+        qCWarning(taskManagerLog) << "reject folder placeholder due to empty normalized path" << folderUrl;
+        return false;
+    }
+
+    QFileInfo folderInfo(folderPath);
+    if (!folderInfo.exists() || !folderInfo.isDir()) {
+        qCWarning(taskManagerLog) << "reject folder placeholder due to invalid folder" << folderUrl << folderPath;
+        return false;
+    }
+
+    const QString dockElement = QStringLiteral("folder/%1").arg(folderPath);
+    if (Settings->isDocked(dockElement)) {
+        qCWarning(taskManagerLog) << "reject folder placeholder because already docked" << folderUrl << dockElement;
+        return false;
+    }
+
+    return m_dockGlobalElementModel->setDropPlaceholderElement(dockElement);
+}
+
+void TaskManager::commitDockPlaceholder()
+{
+    if (m_dockGlobalElementModel) {
+        m_dockGlobalElementModel->commitDropPlaceholder();
+    }
+}
+
+void TaskManager::clearDockPlaceholder()
+{
+    if (m_dockGlobalElementModel) {
+        m_dockGlobalElementModel->clearDropPlaceholder();
+    }
 }
 
 bool TaskManager::requestDockByDesktopId(const QString& desktopID)

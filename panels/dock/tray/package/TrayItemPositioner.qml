@@ -9,9 +9,6 @@ import org.deepin.ds.dock.tray 1.0 as DDT
 Control {
     id: root
     property bool itemVisible: {
-        if (DDT.TraySortOrderModel.isUpdating) {
-            return false
-        }
         if (model.sectionType === "collapsable") return !collapsed && model.visibility && model.dockVisible
         return model.sectionType !== "stashed" && model.visibility && model.dockVisible
     }
@@ -20,6 +17,7 @@ Control {
     property point visualPosition: DDT.TrayItemPositionRegister.visualPosition
     property bool isDragging: DDT.TraySortOrderModel.actionsAlwaysVisible
     property bool animationEnable: true
+    visible: itemVisible || opacity > 0.01
 
     onIsDraggingChanged: {
         animationEnable = !isDragging
@@ -58,7 +56,6 @@ Control {
             when: root.itemVisible
             PropertyChanges { target: root; opacity: 1.0 }
             PropertyChanges { target: root; scale: 1.0 }
-            PropertyChanges { target: root; visible: true }
         },
         State {
             name: "item-invisible"
@@ -72,7 +69,6 @@ Control {
             to: "item-invisible"
             SequentialAnimation {
                 NumberAnimation { properties: "opacity,scale"; easing.type: Easing.OutQuad; duration: 200 }
-                PropertyAction { target: root; property: "visible"; value: false }
                 PropertyAction { target: DDT.TraySortOrderModel; property: "isCollapsing"; value: false }
             }
         },

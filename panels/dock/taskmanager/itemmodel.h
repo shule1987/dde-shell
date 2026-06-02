@@ -5,6 +5,8 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QHash>
+#include <QPointer>
 
 namespace dock {
 class AbstractItem;
@@ -46,5 +48,7 @@ private:
 
     int m_recentSize;
     QList<QPointer<AbstractItem>> m_items;
+    QHash<QString, QPointer<AbstractItem>> m_itemById;
+    QHash<AbstractItem *, int> m_itemRows;
 };
 }

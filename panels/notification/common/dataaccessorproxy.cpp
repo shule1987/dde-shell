@@ -124,6 +124,15 @@ QList<NotifyEntity> DataAccessorProxy::fetchEntities(const QString &appName, int
     return m_source->fetchEntities(appName, processedType, maxCount);
 }
 
+QList<NotifyEntity> DataAccessorProxy::fetchLastEntitiesByApps(int processedType, int maxCount)
+{
+    if (processedType == NotifyEntity::NotProcessed) {
+        return m_impl->fetchLastEntitiesByApps(processedType, maxCount);
+    }
+
+    return m_source->fetchLastEntitiesByApps(processedType, maxCount);
+}
+
 QList<QString> DataAccessorProxy::fetchApps(int maxCount) const
 {
     return m_source->fetchApps(maxCount);

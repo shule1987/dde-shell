@@ -76,6 +76,7 @@ private:
 
     void launchpadArrangementConfigMigration();
     void loadAppGroupInfo();
+    void scheduleSaveAppGroupInfo();
     void saveAppGroupInfo();
     QString assignGroupId() const;
 

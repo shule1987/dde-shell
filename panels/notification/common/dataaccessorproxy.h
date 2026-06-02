@@ -32,6 +32,7 @@ public:
     virtual NotifyEntity fetchLastEntity(const QString &appName, int processedType) override;
     virtual NotifyEntity fetchLastEntity(uint notifyId) override;
     virtual QList<NotifyEntity> fetchEntities(const QString &appName, int processedType, int maxCount) override;
+    virtual QList<NotifyEntity> fetchLastEntitiesByApps(int processedType, int maxCount) override;
     virtual QList<QString> fetchApps(int maxCount) const override;
 
     virtual void removeEntity(qint64 id) override;

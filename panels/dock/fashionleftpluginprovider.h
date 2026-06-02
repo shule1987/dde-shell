@@ -157,7 +157,7 @@ private:
     static QString weatherConfigPath();
     static QString weatherIconPathFor(const QString &iconName, bool isDay);
     static QString formatTransferRate(double bytesPerSecond);
-    static quint64 totalInterfaceBytes(bool receiveBytes, const QStringList &preferredInterfaces = {});
+    static void interfaceByteTotals(const QStringList &preferredInterfaces, quint64 *receiveBytes, quint64 *transmitBytes);
     void applyAiRefreshResult(const QVariantMap &result);
     void ensureWeatherWatchPaths();
     void refreshMailClient();

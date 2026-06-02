@@ -23,6 +23,9 @@ signals:
     void sourceColumnChanged(int sourceColum);
 
 private:
+    void connectSourceDataChanged();
+
     QList<int> m_roles;
     int m_sourceColumn = 0;
+    QMetaObject::Connection m_sourceDataChangedConnection;
 };

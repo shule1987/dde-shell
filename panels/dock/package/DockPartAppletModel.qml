@@ -15,8 +15,41 @@ D.SortFilterModel {
     property int rightDockOrder: 0
     property var acceptItem: null
     property var sortOrderProvider: null
+    property var sourceAppletModel: Applet.appletItems
 
-    model: Applet.appletItems
+    model: sourceAppletModel
+
+    function scheduleUpdate() {
+        updateTimer.restart()
+    }
+
+    Timer {
+        id: updateTimer
+        interval: 0
+        repeat: false
+        onTriggered: model.update()
+    }
+
+    Connections {
+        target: model.sourceAppletModel
+        ignoreUnknownSignals: true
+
+        function onRowsInserted() {
+            model.scheduleUpdate()
+        }
+
+        function onRowsRemoved() {
+            model.scheduleUpdate()
+        }
+
+        function onModelReset() {
+            model.scheduleUpdate()
+        }
+
+        function onLayoutChanged() {
+            model.scheduleUpdate()
+        }
+    }
 
     filterAcceptsItem: function(item) {
         if (acceptItem) {
@@ -83,11 +116,24 @@ D.SortFilterModel {
         implicitHeight: appletItem ? appletItem.implicitHeight : 0
         rightPadding: aiBarRightPadding
 
+        Binding on width {
+            value: Math.max(1, delegateRoot.implicitWidth)
+        }
+
+        Binding on height {
+            value: Math.max(1, delegateRoot.implicitHeight)
+        }
+
         transform: Translate {
             x: delegateRoot.aiBarHorizontalOffset
         }
 
-        contentItem: appletItem
+        contentItem: Item {
+            id: appletHost
+
+            implicitWidth: delegateRoot.appletItem ? delegateRoot.appletItem.implicitWidth : 0
+            implicitHeight: delegateRoot.appletItem ? delegateRoot.appletItem.implicitHeight : 0
+        }
         background: AppletItemBackground {
             x: Math.round(!delegateRoot.isAiBarApplet || (Panel.rootObject && Panel.rootObject.useColumnLayout)
                           ? (delegateRoot.width - width) / 2
@@ -128,13 +174,19 @@ D.SortFilterModel {
         }
 
         function syncAppletItem() {
-            if (attachedAppletItem && attachedAppletItem !== appletItem && attachedAppletItem.parent === delegateRoot) {
+            if (attachedAppletItem && attachedAppletItem !== appletItem && attachedAppletItem.parent === appletHost) {
                 attachedAppletItem.parent = null
             }
 
             if (appletItem) {
-                appletItem.parent = delegateRoot
-                attachedAppletItem = appletItem
+                const item = appletItem
+                item.parent = appletHost
+                item.width = Qt.binding(function() { return Math.max(item.implicitWidth, appletHost.width) })
+                item.height = Qt.binding(function() { return Math.max(item.implicitHeight, appletHost.height) })
+                item.visible = Qt.binding(function() {
+                    return item.shouldVisible === undefined || item.shouldVisible
+                })
+                attachedAppletItem = item
             } else {
                 attachedAppletItem = null
             }
@@ -151,7 +203,7 @@ D.SortFilterModel {
         Component.onCompleted: syncAppletItem()
 
         Component.onDestruction: {
-            if (attachedAppletItem && attachedAppletItem.parent === delegateRoot) {
+            if (attachedAppletItem && attachedAppletItem.parent === appletHost) {
                 attachedAppletItem.parent = null
             }
             attachedAppletItem = null

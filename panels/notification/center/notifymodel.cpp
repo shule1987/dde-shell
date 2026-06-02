@@ -6,6 +6,7 @@
 
 #include <QTimerEvent>
 #include <QLoggingCategory>
+#include <QSet>
 
 #include "notifyentity.h"
 #include "notifyitem.h"
@@ -146,6 +147,8 @@ void NotifyModel::open()
     qDebug(notifyLog) << "Open";
 
     auto apps = fetchLastApps();
+    QList<AppNotifyItem *> pendingNotifies;
+    pendingNotifies.reserve(apps.size());
     for (auto appName : apps) {
         const auto tmp = m_accessor->fetchEntities(appName, 3);
         if (tmp.isEmpty())
@@ -158,20 +161,21 @@ void NotifyModel::open()
             // add overlap
             qDebug(notifyLog) << "Add ovelay for the notify" << entity.id();
 
-            const int start = m_appNotifies.size();
             auto overlap = new OverlapAppNotifyItem(entity);
             overlap->updateCount(tmp.size());
-            beginInsertRows(QModelIndex(), start, start);
-            m_appNotifies.append(overlap);
-            endInsertRows();
+            pendingNotifies.append(overlap);
         } else {
             // add normal
-            const int start = m_appNotifies.size();
-            beginInsertRows(QModelIndex(), start, start);
             auto notify = new AppNotifyItem(entity);
-            m_appNotifies.append(notify);
-            endInsertRows();
+            pendingNotifies.append(notify);
         }
+    }
+
+    if (!pendingNotifies.isEmpty()) {
+        const int start = m_appNotifies.size();
+        beginInsertRows(QModelIndex(), start, start + pendingNotifies.size() - 1);
+        m_appNotifies.append(pendingNotifies);
+        endInsertRows();
     }
 }
 
@@ -280,24 +284,7 @@ void NotifyModel::append(const NotifyEntity &entity)
 QList<QString> NotifyModel::fetchLastApps(int maxCount) const
 {
     qDebug(notifyLog) << "Fetch last apps count" << maxCount;
-    QStringList pinnedApps;
-    auto allApps = m_accessor->fetchApps(-1);
-    for (auto item : allApps) {
-        if (m_accessor->applicationPin(item)) {
-            pinnedApps << item;
-            if (maxCount >= 0 && pinnedApps.size() >= maxCount)
-                break;
-        }
-    }
-
-    QList<NotifyEntity> lastEntities;
-    for (auto item : allApps) {
-        const auto entity = m_accessor->fetchLastEntity(item);
-        if (!entity.isValid())
-            continue;
-        lastEntities << entity;
-    }
-
+    QList<NotifyEntity> lastEntities = m_accessor->fetchLastEntitiesByApps(maxCount);
     std::sort(lastEntities.begin(), lastEntities.end(), [this] (
                                                             const NotifyEntity &item1,
                                                             const NotifyEntity &item2) {
@@ -602,11 +589,9 @@ void NotifyModel::collapseAllApp()
 
 void NotifyModel::expandAllApp()
 {
-    QStringList existApps;
+    QSet<QString> existApps;
     for (auto item: std::as_const(m_appNotifies)) {
-        if (existApps.contains(item->appName()))
-            continue;
-        existApps << item->appName();
+        existApps.insert(item->appName());
     }
 
     const auto apps = fetchLastApps();
@@ -668,7 +653,6 @@ void NotifyModel::pinApplication(const QString &appName, bool pin)
         for (auto item : notifies) {
             item->setPinned(pin);
         }
-        dataChanged(index(0), index(rowCount(QModelIndex()) - 1), {NotifyPinned});
 
         // sort
         sortNotifies();
@@ -724,7 +708,7 @@ QVariant NotifyModel::data(const QModelIndex &index, int role) const
             return item->count();
         }
     } else if (role == NotifyRole::NotifyContentRowCount) {
-        return NotifySetting::instance()->contentRowCount();
+        return m_contentRowCount;
     } else if (role == NotifyRole::NotifyIndexInGroup) {
         return notify->indexInGroup();
     }
@@ -758,11 +742,24 @@ void NotifyModel::updateTime()
     if (m_appNotifies.isEmpty())
         return;
 
+    int firstChanged = -1;
+    int lastChanged = -1;
     QList<AppNotifyItem *> tmp = m_appNotifies;
-    for (auto item : tmp) {
+    for (int row = 0; row < tmp.size(); ++row) {
+        auto item = tmp.at(row);
+        const QString previousTime = item->time();
         item->updateTime();
+        if (item->time() != previousTime) {
+            if (firstChanged < 0) {
+                firstChanged = row;
+            }
+            lastChanged = row;
+        }
     }
-    dataChanged(index(0), index(rowCount(QModelIndex()) - 1), {NotifyTime});
+
+    if (firstChanged >= 0) {
+        dataChanged(index(firstChanged), index(lastChanged), {NotifyTime});
+    }
 }
 
 QHash<int, QByteArray> NotifyModel::roleNames() const

@@ -54,6 +54,7 @@ public:
         DockElementRole,
         ItemKindRole,
         PreviewIconsRole,
+        DropPlaceholderRole,
 
         // from dde-apps
         DesktopIdRole = 0x1000,
@@ -109,6 +110,10 @@ public:
     Q_INVOKABLE QString dockElementFromLauncherId(const QString &launcherId) const;
     Q_INVOKABLE QString displayNameForDockElement(const QString &dockElement) const;
     Q_INVOKABLE QString folderUrlToElementId(const QString &folderUrl) const;
+    Q_INVOKABLE bool stageDockPlaceholderByDesktopId(const QString& desktopID);
+    Q_INVOKABLE bool stageDockPlaceholderByFolderUrl(const QString &folderUrl);
+    Q_INVOKABLE void commitDockPlaceholder();
+    Q_INVOKABLE void clearDockPlaceholder();
     Q_INVOKABLE bool requestDockByDesktopId(const QString& desktopID);
     Q_INVOKABLE bool requestUndockByDesktopId(const QString& desktopID);
     Q_INVOKABLE bool requestDockByFolderUrl(const QString &folderUrl);

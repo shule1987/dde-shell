@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <QHash>
 #include <QtQml/qqml.h>
 #include <QSortFilterProxyModel>
 #include <QQmlParserStatus>
@@ -53,6 +54,7 @@ protected:
 private:
     void updateQuickPlugins();
     void watchingCountChanged();
+    void rebuildTraySurfaceCache();
 
     int pluginOrder(const QModelIndex &index) const;
     int surfaceType(const QModelIndex &index) const;
@@ -72,9 +74,12 @@ private slots:
 
 private:
     QStringList m_quickPlugins;
+    QHash<QString, int> m_quickPluginOrder;
     QStringList m_hideInPanelPlugins;
     QString m_trayItemPluginId;
     QAbstractItemModel *m_trayPluginModel = nullptr;
+    QHash<QString, QObject *> m_traySurfaceByPluginId;
+    QHash<QString, QString> m_traySurfaceItemKeyByPluginId;
 };
 
 }

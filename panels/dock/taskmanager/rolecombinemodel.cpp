@@ -385,7 +385,7 @@ RoleCombineModel::RoleCombineModel(QAbstractItemModel* major, QAbstractItemModel
 QHash<int, QByteArray> RoleCombineModel::createRoleNames() const
 {
     auto roleNames = sourceModel()->roleNames();
-    auto keys = sourceModel()->roleNames().keys();
+    auto keys = roleNames.keys();
     auto lastRole = *(std::max_element(keys.constBegin(), keys.constEnd()));
     auto minorRoleNames = m_minor->roleNames().values();
     std::for_each(minorRoleNames.constBegin(), minorRoleNames.constEnd(), [&lastRole, &roleNames, this](auto &roleName) {

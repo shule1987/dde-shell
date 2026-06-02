@@ -22,6 +22,7 @@ Item {
     property ListModel trayPluginSurfaces: ListModel {}
     property ListModel quickPluginSurfaces: ListModel {}
     property ListModel fixedPluginSurfaces: ListModel {}
+    property int pluginSurfaceRevision: 0
 
     property var compositor: waylandCompositor
     property var panelScale: 1.0
@@ -85,6 +86,7 @@ Item {
                 } else if (dockPluginSurface.pluginType === Dock.Fixed) {
                     fixedPluginSurfaces.append({shellSurface: dockPluginSurface})
                 }
+                dockCompositor.pluginSurfaceRevision++
                 dockCompositor.pluginSurfacesUpdated()
             }
 
@@ -97,6 +99,7 @@ Item {
                 } else if (dockPluginSurface.pluginType === Dock.Fixed) {
                     removeDockPluginSurface(fixedPluginSurfaces, dockPluginSurface)
                 }
+                dockCompositor.pluginSurfaceRevision++
                 dockCompositor.pluginSurfacesUpdated()
             }
 

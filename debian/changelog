@@ -1,3 +1,21 @@
+dde-shell (2.2.0) unstable; urgency=medium
+
+  * chore: release 2.2.0.
+
+ -- shule1987 <shule1987@qq.com>  Mon, 01 Jun 2026 16:01:49 +0800
+
+dde-shell (2.0.40) unstable; urgency=medium
+
+  * fix: hide unavailable stashed tray surfaces.
+
+ -- shule1987 <shule1987@qq.com>  Fri, 29 May 2026 10:02:17 +0800
+
+dde-shell (2.0.39) unstable; urgency=medium
+
+  * chore: bump package version.
+
+ -- shule1987 <shule1987@qq.com>  Thu, 28 May 2026 09:40:20 +0800
+
 dde-shell (2.0.38) unstable; urgency=medium
 
   * fix: restore dock taskbar application icons
