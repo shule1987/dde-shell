@@ -869,10 +869,9 @@ FocusScope {
                 scrollToEntryAnimation.restart()
             }
 
-            D.ScrollView {
+            Item {
                 id: gridScrollView
                 anchors.fill: parent
-                padding: 0
                 clip: true
 
                 Flickable {
