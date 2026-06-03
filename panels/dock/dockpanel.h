@@ -89,6 +89,7 @@ public:
 
     bool debugMode() const;
     bool launcherShown() const;
+    void setFullscreenLauncherShown(bool shown);
 
     Q_INVOKABLE void openDockSettings() const;
 
@@ -159,6 +160,10 @@ Q_SIGNALS:
     void isResizingChanged(bool isResizing);
 
 private:
+    void setDbusLauncherShown(bool shown);
+    void updateLauncherShown();
+
+private:
     ColorTheme m_theme;
     HideState m_hideState;
     DockHelper* m_helper;
@@ -166,6 +171,8 @@ private:
     LoadTrayPlugins *m_loadTrayPlugins;
     bool m_compositorReady;
     bool m_launcherShown;
+    bool m_dbusLauncherShown;
+    bool m_fullscreenLauncherShown;
     QTimer *m_themeSyncTimer;
     bool m_contextDragging;
     bool m_containsMouse;

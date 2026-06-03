@@ -169,6 +169,8 @@ DockPanel::DockPanel(QObject *parent)
     , m_loadTrayPlugins(new LoadTrayPlugins(this))
     , m_compositorReady(false)
     , m_launcherShown(false)
+    , m_dbusLauncherShown(false)
+    , m_fullscreenLauncherShown(false)
     , m_themeSyncTimer(new QTimer(this))
     , m_contextDragging(false)
     , m_containsMouse(false)
@@ -580,6 +582,16 @@ bool DockPanel::launcherShown() const
     return m_launcherShown;
 }
 
+void DockPanel::setFullscreenLauncherShown(bool shown)
+{
+    if (shown == m_fullscreenLauncherShown) {
+        return;
+    }
+
+    m_fullscreenLauncherShown = shown;
+    updateLauncherShown();
+}
+
 void DockPanel::openDockSettings() const
 {
     DDBusSender()
@@ -628,17 +640,34 @@ void DockPanel::reportMousePresence(bool containsMouse, const QPointF &cursorPos
 
 void DockPanel::launcherVisibleChanged(bool visible)
 {
-    if (visible == m_launcherShown) return;
+    setDbusLauncherShown(visible);
+}
+
+void DockPanel::setDbusLauncherShown(bool shown)
+{
+    if (shown == m_dbusLauncherShown) {
+        return;
+    }
+
+    m_dbusLauncherShown = shown;
+    updateLauncherShown();
+}
+
+void DockPanel::updateLauncherShown()
+{
+    const bool shown = m_dbusLauncherShown || m_fullscreenLauncherShown;
+    if (shown == m_launcherShown) {
+        return;
+    }
 
     const HideState oldHideState = hideState();
-    m_launcherShown = visible;
+    m_launcherShown = shown;
     Q_EMIT launcherShownChanged(m_launcherShown);
     const HideState newHideState = hideState();
 
     if (newHideState != oldHideState) {
         Q_EMIT hideStateChanged(newHideState);
     }
-
 }
 
 void DockPanel::updateDockScreen()

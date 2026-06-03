@@ -8,6 +8,7 @@
 #include "dockpanel.h"
 
 #include <algorithm>
+#include <QByteArray>
 #include <xcb/res.h>
 #include <xcb/xcb.h>
 #include <xcb/xproto.h>
@@ -150,12 +151,24 @@ bool XcbEventFilter::nativeEventFilter(const QByteArray &eventType, void *messag
         if (pE->window == m_rootWindow) {
             if (pE->atom == getAtomByName("_NET_CLIENT_LIST")) {
                 Q_EMIT windowClientListChanged();
+                m_helper->syncLaunchpadVisibilityFromWindows();
+            } else if (pE->atom == getAtomByName("_NET_ACTIVE_WINDOW")) {
+                m_helper->syncLaunchpadVisibilityFromWindows();
             } else if (pE->atom == getAtomByName("_NET_CURRENT_DESKTOP")) {
                 checkCurrentWorkspace();
             }
         } else {
             Q_EMIT windowPropertyChanged(pE->window, pE->atom);
+            m_helper->syncLaunchpadVisibilityFromWindows();
         }
+        break;
+    }
+    case XCB_MAP_NOTIFY: {
+        m_helper->syncLaunchpadVisibilityFromWindows();
+        break;
+    }
+    case XCB_UNMAP_NOTIFY: {
+        m_helper->syncLaunchpadVisibilityFromWindows();
         break;
     }
     case XCB_CONFIGURE_NOTIFY: {
@@ -220,6 +233,104 @@ QList<xcb_window_t> XcbEventFilter::getWindowClientList()
     }
 
     return ret;
+}
+
+QByteArray XcbEventFilter::getWindowPropertyBytes(const xcb_window_t &window, const xcb_atom_t &atom)
+{
+    if (window == XCB_WINDOW_NONE || atom == XCB_ATOM_NONE) {
+        return {};
+    }
+
+    QSharedPointer<xcb_get_property_reply_t> reply(
+        xcb_get_property_reply(m_connection,
+                               xcb_get_property(m_connection, false, window, atom, XCB_GET_PROPERTY_TYPE_ANY, 0, 1024),
+                               nullptr),
+        [](xcb_get_property_reply_t *reply) {
+            free(reply);
+        });
+    if (!reply || xcb_get_property_value_length(reply.get()) <= 0) {
+        return {};
+    }
+
+    return QByteArray(static_cast<const char *>(xcb_get_property_value(reply.get())),
+                      xcb_get_property_value_length(reply.get()));
+}
+
+QList<xcb_window_t> XcbEventFilter::getRootWindowChildren()
+{
+    QList<xcb_window_t> ret;
+    QSharedPointer<xcb_query_tree_reply_t> reply(
+        xcb_query_tree_reply(m_connection, xcb_query_tree(m_connection, m_rootWindow), nullptr),
+        [](xcb_query_tree_reply_t *reply) {
+            free(reply);
+        });
+    if (!reply) {
+        return ret;
+    }
+
+    const int childrenLength = xcb_query_tree_children_length(reply.get());
+    xcb_window_t *children = xcb_query_tree_children(reply.get());
+    for (int i = 0; i < childrenLength; ++i) {
+        ret.push_back(children[i]);
+    }
+
+    return ret;
+}
+
+bool XcbEventFilter::windowIsViewable(const xcb_window_t &window)
+{
+    if (window == XCB_WINDOW_NONE) {
+        return false;
+    }
+
+    QSharedPointer<xcb_get_window_attributes_reply_t> reply(
+        xcb_get_window_attributes_reply(m_connection, xcb_get_window_attributes(m_connection, window), nullptr),
+        [](xcb_get_window_attributes_reply_t *reply) {
+            free(reply);
+        });
+
+    return reply && reply->map_state == XCB_MAP_STATE_VIEWABLE;
+}
+
+bool XcbEventFilter::isFullscreenLaunchpadWindow(const xcb_window_t &window)
+{
+    const QByteArray wmClass = getWindowPropertyBytes(window, getAtomByName(QStringLiteral("WM_CLASS")));
+    if (!wmClass.contains("dde-shell/launchpad")) {
+        return false;
+    }
+
+    static const QByteArray fullscreenLaunchpadTitle("org.deepin.ds.launchpad.fullscreen");
+    const QByteArray wmName = getWindowPropertyBytes(window, getAtomByName(QStringLiteral("WM_NAME")));
+    if (wmName.contains(fullscreenLaunchpadTitle)) {
+        return true;
+    }
+
+    const QByteArray netWmName = getWindowPropertyBytes(window, getAtomByName(QStringLiteral("_NET_WM_NAME")));
+    return netWmName.contains(fullscreenLaunchpadTitle);
+}
+
+bool XcbEventFilter::fullscreenLaunchpadMapped()
+{
+    const xcb_window_t activeWindow = getActiveWindow();
+    if (activeWindow != XCB_WINDOW_NONE && isFullscreenLaunchpadWindow(activeWindow)) {
+        return true;
+    }
+
+    QList<xcb_window_t> windows = getWindowClientList();
+    const QList<xcb_window_t> rootChildren = getRootWindowChildren();
+    for (xcb_window_t window : rootChildren) {
+        if (!windows.contains(window)) {
+            windows.push_back(window);
+        }
+    }
+
+    for (xcb_window_t window : windows) {
+        if (windowIsViewable(window) && isFullscreenLaunchpadWindow(window)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 QList<xcb_atom_t> XcbEventFilter::getWindowState(const xcb_window_t &window)
@@ -331,6 +442,16 @@ uint32_t XcbEventFilter::getCurrentWorkspace()
     return m_currentWorkspace;
 }
 
+xcb_window_t XcbEventFilter::getActiveWindow()
+{
+    xcb_window_t activeWindow = XCB_WINDOW_NONE;
+    xcb_ewmh_get_active_window_reply(&m_ewmh,
+                                     xcb_ewmh_get_active_window(&m_ewmh, 0),
+                                     &activeWindow,
+                                     nullptr);
+    return activeWindow;
+}
+
 void XcbEventFilter::checkCurrentWorkspace()
 {
     uint32_t desktop = XCB_NONE;
@@ -374,12 +495,27 @@ X11DockHelper::X11DockHelper(DockPanel *panel)
     : DockHelper(panel)
     , m_xcbHelper(new XcbEventFilter(this))
     , m_updateDockAreaTimer(new QTimer(this))
+    , m_raiseDockTimer(new QTimer(this))
+    , m_raiseDockPasses(0)
     , m_showingDesktop(false)
 {
     m_updateDockAreaTimer->setSingleShot(true);
     m_updateDockAreaTimer->setInterval(100);
+    m_raiseDockTimer->setInterval(80);
 
     connect(m_updateDockAreaTimer, &QTimer::timeout, this, &X11DockHelper::updateDockArea);
+    connect(m_raiseDockTimer, &QTimer::timeout, this, [this] {
+        if (m_raiseDockPasses <= 0) {
+            m_raiseDockTimer->stop();
+            return;
+        }
+
+        raiseDockWindow();
+        --m_raiseDockPasses;
+        if (m_raiseDockPasses <= 0) {
+            m_raiseDockTimer->stop();
+        }
+    });
     connect(panel, &DockPanel::hideModeChanged, this, &X11DockHelper::onHideModeChanged);
     connect(panel, &DockPanel::rootObjectChanged, m_updateDockAreaTimer, static_cast<void (QTimer::*)()>(&QTimer::start));
     connect(panel, &DockPanel::positionChanged, m_updateDockAreaTimer, static_cast<void (QTimer::*)()>(&QTimer::start));
@@ -397,6 +533,7 @@ X11DockHelper::X11DockHelper(DockPanel *panel)
     qGuiApp->installNativeEventFilter(m_xcbHelper);
     setupKWinDBusConnection();
     onHideModeChanged(panel->hideMode());
+    QMetaObject::invokeMethod(this, &X11DockHelper::syncLaunchpadVisibilityFromWindows, Qt::QueuedConnection);
 }
 
 [[nodiscard]] DockWakeUpArea *X11DockHelper::createArea(QScreen *screen)
@@ -617,6 +754,58 @@ bool X11DockHelper::isWindowOverlap()
         return overlap |= window->overlap;
     });
     return overlap;
+}
+
+void X11DockHelper::raiseDockWindow()
+{
+    QWindow *window = parent()->window();
+    if (!window) {
+        return;
+    }
+
+    window->raise();
+    window->create();
+
+    auto *x11App = qGuiApp->nativeInterface<QNativeInterface::QX11Application>();
+    if (!x11App || !x11App->connection() || window->winId() == XCB_WINDOW_NONE) {
+        return;
+    }
+
+    const xcb_window_t nativeWindow = m_xcbHelper->getDecorativeWindow(static_cast<xcb_window_t>(window->winId()));
+    if (nativeWindow == XCB_WINDOW_NONE) {
+        return;
+    }
+
+    const uint32_t values[] = { XCB_STACK_MODE_ABOVE };
+    xcb_configure_window(x11App->connection(), nativeWindow, XCB_CONFIG_WINDOW_STACK_MODE, values);
+    xcb_flush(x11App->connection());
+}
+
+void X11DockHelper::startDockRaisePasses()
+{
+    m_raiseDockPasses = 10;
+    raiseDockWindow();
+    if (!m_raiseDockTimer->isActive()) {
+        m_raiseDockTimer->start();
+    }
+}
+
+void X11DockHelper::stopDockRaisePasses()
+{
+    m_raiseDockPasses = 0;
+    m_raiseDockTimer->stop();
+}
+
+void X11DockHelper::syncLaunchpadVisibilityFromWindows()
+{
+    if (m_xcbHelper && m_xcbHelper->fullscreenLaunchpadMapped()) {
+        parent()->setFullscreenLauncherShown(true);
+        startDockRaisePasses();
+        return;
+    }
+
+    stopDockRaisePasses();
+    DockHelper::syncLaunchpadVisibilityFromWindows();
 }
 
 X11DockWakeUpArea::X11DockWakeUpArea(QScreen *screen, X11DockHelper *helper)

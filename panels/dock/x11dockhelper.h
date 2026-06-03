@@ -30,6 +30,8 @@ public:
     xcb_window_t getDecorativeWindow(const xcb_window_t& window);
     uint32_t getWindowWorkspace(const xcb_window_t& window);
     uint32_t getCurrentWorkspace();
+    xcb_window_t getActiveWindow();
+    bool fullscreenLaunchpadMapped();
     void checkCurrentWorkspace();
     bool shouldSkip(const xcb_window_t& window);
     void monitorWindowChange(const xcb_window_t& window);
@@ -42,6 +44,10 @@ Q_SIGNALS:
     void currentWorkspaceChanged();
 
 private:
+    QByteArray getWindowPropertyBytes(const xcb_window_t& window, const xcb_atom_t& atom);
+    QList<xcb_window_t> getRootWindowChildren();
+    bool isFullscreenLaunchpadWindow(const xcb_window_t& window);
+    bool windowIsViewable(const xcb_window_t& window);
     bool inTriggerArea(xcb_window_t win) const;
     void processEnterLeave(xcb_window_t win, bool enter);
 
@@ -63,6 +69,7 @@ public:
 protected:
     bool currentActiveWindowFullscreened() override;
     bool isWindowOverlap() override;
+    void syncLaunchpadVisibilityFromWindows() override;
 
     [[nodiscard]] DockWakeUpArea *createArea(QScreen *screen) override;
     void destroyArea(DockWakeUpArea *area) override;
@@ -79,6 +86,9 @@ private Q_SLOTS:
     void updateWindowHideState(xcb_window_t window);
 
     void updateDockArea();
+    void raiseDockWindow();
+    void startDockRaisePasses();
+    void stopDockRaisePasses();
 
     // KWin D-Bus signal handler
     void onShowingDesktopChanged(bool showing);
@@ -93,6 +103,8 @@ private:
     QHash<xcb_window_t, WindowData*> m_windows;
     XcbEventFilter *m_xcbHelper;
     QTimer *m_updateDockAreaTimer;
+    QTimer *m_raiseDockTimer;
+    int m_raiseDockPasses;
     bool m_showingDesktop;
 };
 

@@ -36,6 +36,7 @@ protected:
 
     virtual bool currentActiveWindowFullscreened() = 0;
     virtual bool isWindowOverlap() = 0;
+    virtual void syncLaunchpadVisibilityFromWindows();
 
 private:
     bool wakeUpAreaNeedShowOnThisScreen(QScreen *screen);

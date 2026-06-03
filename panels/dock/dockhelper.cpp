@@ -40,6 +40,16 @@ bool isDockRelatedWindow(QWindow *window, QWindow *dockWindow)
     return topTransientParent(window) == dockWindow;
 }
 
+bool isFullscreenLaunchpadWindow(QWindow *window)
+{
+    if (!window) {
+        return false;
+    }
+
+    return window->objectName() == QStringLiteral("FullscreenFrameApplicationWindow")
+        || window->title() == QStringLiteral("org.deepin.ds.launchpad.fullscreen");
+}
+
 QRect expandedGeometry(const QRect &geometry, int margin)
 {
     return geometry.adjusted(-margin, -margin, margin, margin);
@@ -129,10 +139,12 @@ DockHelper::DockHelper(DockPanel *parent)
     qApp->installEventFilter(this);
     QMetaObject::invokeMethod(this, &DockHelper::initAreas, Qt::QueuedConnection);
     QMetaObject::invokeMethod(this, &DockHelper::checkNeedShowOrNot, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(this, &DockHelper::syncLaunchpadVisibilityFromWindows, Qt::QueuedConnection);
 
     connect(parent, &DockPanel::rootObjectChanged, this, &DockHelper::initAreas);
     connect(parent, &DockPanel::showInPrimaryChanged, this, &DockHelper::updateAllDockWakeArea);
     connect(parent, &DockPanel::hideStateChanged, this, &DockHelper::updateAllDockWakeArea);
+    connect(parent, &DockPanel::hideModeChanged, this, &DockHelper::syncLaunchpadVisibilityFromWindows);
     connect(parent, &DockPanel::viewModeChanged, this, [this]() {
         updateAllDockWakeArea();
         updatePanelMouseState();
@@ -190,6 +202,20 @@ bool DockHelper::eventFilter(QObject *watched, QEvent *event)
     auto window = static_cast<QWindow *>(watched);
     if (!window) {
         return false;
+    }
+
+    if (isFullscreenLaunchpadWindow(window)) {
+        switch (event->type()) {
+        case QEvent::Show:
+            parent()->setFullscreenLauncherShown(true);
+            break;
+        case QEvent::Hide:
+        case QEvent::Close:
+            QMetaObject::invokeMethod(this, &DockHelper::syncLaunchpadVisibilityFromWindows, Qt::QueuedConnection);
+            break;
+        default:
+            break;
+        }
     }
 
     // skip tooltip windows
@@ -452,8 +478,24 @@ void DockHelper::updateCursorPosition(QEvent *event)
     parent()->setCursorPosition(globalPosition - parent()->window()->position());
 }
 
+void DockHelper::syncLaunchpadVisibilityFromWindows()
+{
+    bool fullscreenLaunchpadShown = false;
+    const auto windows = QGuiApplication::topLevelWindows();
+    for (QWindow *window : windows) {
+        if (isFullscreenLaunchpadWindow(window) && window->isVisible()) {
+            fullscreenLaunchpadShown = true;
+            break;
+        }
+    }
+
+    parent()->setFullscreenLauncherShown(fullscreenLaunchpadShown);
+}
+
 void DockHelper::checkNeedHideOrNot()
 {
+    syncLaunchpadVisibilityFromWindows();
+
     if (parent()->launcherShown()) {
         parent()->setHideState(Show);
         return;
@@ -500,6 +542,8 @@ void DockHelper::checkNeedHideOrNot()
 
 void DockHelper::checkNeedShowOrNot()
 {
+    syncLaunchpadVisibilityFromWindows();
+
     if (parent()->launcherShown()) {
         parent()->setHideState(Show);
         return;
