@@ -72,14 +72,14 @@ QString AppItem::type() const
 
 QString AppItem::icon() const
 {
-    const QString windowIcon = windowIconName(m_currentActiveWindow);
-    if (!windowIcon.isEmpty()) {
-        return windowIcon;
-    }
-
     const QString desktopIcon = desktopIconName(m_desktopfileParser);
     if (!desktopIcon.isEmpty()) {
         return desktopIcon;
+    }
+
+    const QString windowIcon = windowIconName(m_currentActiveWindow);
+    if (!windowIcon.isEmpty()) {
+        return windowIcon;
     }
 
     return QString::fromLatin1(DEFAULT_APP_ICONNAME);

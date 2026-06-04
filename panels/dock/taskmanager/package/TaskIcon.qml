@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import QtQuick 2.15
+import org.deepin.ds 1.0
 import org.deepin.dtk 1.0 as D
 
 Item {
@@ -11,6 +12,9 @@ Item {
     property string iconName: ""
     property bool smooth: false
     property bool retainWhileLoading: true
+    readonly property real sourceImageDevicePixelRatio: Panel.devicePixelRatio > 0
+                                                     ? Panel.devicePixelRatio
+                                                     : (Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1.0)
     readonly property bool useSourceImage: iconName.indexOf("data:") === 0
                                            || iconName.indexOf("file:") === 0
                                            || iconName.indexOf("qrc:") === 0
@@ -33,11 +37,11 @@ Item {
     Image {
         anchors.fill: parent
         source: root.useSourceImage ? root.iconName : ""
-        sourceSize: Qt.size(Math.max(1, Math.round(width)),
-                            Math.max(1, Math.round(height)))
+        sourceSize: Qt.size(Math.max(1, Math.round(width * root.sourceImageDevicePixelRatio)),
+                            Math.max(1, Math.round(height * root.sourceImageDevicePixelRatio)))
         fillMode: Image.PreserveAspectFit
         asynchronous: true
-        smooth: root.smooth
+        smooth: true
         visible: root.iconName.length > 0 && root.useSourceImage
     }
 }
