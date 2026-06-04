@@ -86,9 +86,6 @@ private Q_SLOTS:
     void updateWindowHideState(xcb_window_t window);
 
     void updateDockArea();
-    void raiseDockWindow();
-    void startDockRaisePasses();
-    void stopDockRaisePasses();
 
     // KWin D-Bus signal handler
     void onShowingDesktopChanged(bool showing);
@@ -103,8 +100,6 @@ private:
     QHash<xcb_window_t, WindowData*> m_windows;
     XcbEventFilter *m_xcbHelper;
     QTimer *m_updateDockAreaTimer;
-    QTimer *m_raiseDockTimer;
-    int m_raiseDockPasses;
     bool m_showingDesktop;
 };
 

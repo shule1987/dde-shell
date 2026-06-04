@@ -541,7 +541,7 @@ Window {
     DLayerShellWindow.anchors: dock.adaptiveFashionUsesDirectWindowGeometry
         ? (dock.adaptiveFashionTopMode ? DLayerShellWindow.AnchorTop : DLayerShellWindow.AnchorBottom)
         : position2Anchors(positionForAnimation)
-    DLayerShellWindow.layer: DLayerShellWindow.LayerTop
+    DLayerShellWindow.layer: DLayerShellWindow.LayerOverlay
     DLayerShellWindow.exclusionZone: Panel.hideMode === Dock.KeepShowing ? dock.exclusionZoneThickness : 0
     DLayerShellWindow.leftMargin: dock.adaptiveFashionUsesDirectWindowGeometry
         ? 0

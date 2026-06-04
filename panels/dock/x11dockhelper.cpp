@@ -495,27 +495,12 @@ X11DockHelper::X11DockHelper(DockPanel *panel)
     : DockHelper(panel)
     , m_xcbHelper(new XcbEventFilter(this))
     , m_updateDockAreaTimer(new QTimer(this))
-    , m_raiseDockTimer(new QTimer(this))
-    , m_raiseDockPasses(0)
     , m_showingDesktop(false)
 {
     m_updateDockAreaTimer->setSingleShot(true);
     m_updateDockAreaTimer->setInterval(100);
-    m_raiseDockTimer->setInterval(80);
 
     connect(m_updateDockAreaTimer, &QTimer::timeout, this, &X11DockHelper::updateDockArea);
-    connect(m_raiseDockTimer, &QTimer::timeout, this, [this] {
-        if (m_raiseDockPasses <= 0) {
-            m_raiseDockTimer->stop();
-            return;
-        }
-
-        raiseDockWindow();
-        --m_raiseDockPasses;
-        if (m_raiseDockPasses <= 0) {
-            m_raiseDockTimer->stop();
-        }
-    });
     connect(panel, &DockPanel::hideModeChanged, this, &X11DockHelper::onHideModeChanged);
     connect(panel, &DockPanel::rootObjectChanged, m_updateDockAreaTimer, static_cast<void (QTimer::*)()>(&QTimer::start));
     connect(panel, &DockPanel::positionChanged, m_updateDockAreaTimer, static_cast<void (QTimer::*)()>(&QTimer::start));
@@ -756,55 +741,13 @@ bool X11DockHelper::isWindowOverlap()
     return overlap;
 }
 
-void X11DockHelper::raiseDockWindow()
-{
-    QWindow *window = parent()->window();
-    if (!window) {
-        return;
-    }
-
-    window->raise();
-    window->create();
-
-    auto *x11App = qGuiApp->nativeInterface<QNativeInterface::QX11Application>();
-    if (!x11App || !x11App->connection() || window->winId() == XCB_WINDOW_NONE) {
-        return;
-    }
-
-    const xcb_window_t nativeWindow = m_xcbHelper->getDecorativeWindow(static_cast<xcb_window_t>(window->winId()));
-    if (nativeWindow == XCB_WINDOW_NONE) {
-        return;
-    }
-
-    const uint32_t values[] = { XCB_STACK_MODE_ABOVE };
-    xcb_configure_window(x11App->connection(), nativeWindow, XCB_CONFIG_WINDOW_STACK_MODE, values);
-    xcb_flush(x11App->connection());
-}
-
-void X11DockHelper::startDockRaisePasses()
-{
-    m_raiseDockPasses = 10;
-    raiseDockWindow();
-    if (!m_raiseDockTimer->isActive()) {
-        m_raiseDockTimer->start();
-    }
-}
-
-void X11DockHelper::stopDockRaisePasses()
-{
-    m_raiseDockPasses = 0;
-    m_raiseDockTimer->stop();
-}
-
 void X11DockHelper::syncLaunchpadVisibilityFromWindows()
 {
     if (m_xcbHelper && m_xcbHelper->fullscreenLaunchpadMapped()) {
         parent()->setFullscreenLauncherShown(true);
-        startDockRaisePasses();
         return;
     }
 
-    stopDockRaisePasses();
     DockHelper::syncLaunchpadVisibilityFromWindows();
 }
 
