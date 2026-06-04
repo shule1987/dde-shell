@@ -1,3 +1,9 @@
+dde-shell (2.2.2) unstable; urgency=medium
+
+  * fix: keep dock above fullscreen launcher without repeated raise.
+
+ -- shule1987 <shule1987@qq.com>  Thu, 04 Jun 2026 08:05:54 +0800
+
 dde-shell (2.2.1) unstable; urgency=medium
 
   * fix: avoid blocking startup on Appearance1 activation.
