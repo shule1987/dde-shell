@@ -17,6 +17,7 @@ AppletItem {
     property bool shouldVisible: Applet.visible
     property bool dockHoverMagnifyActive: false
     property real iconPressBrightness: mouseHandler.pressed ? -0.16 : 0.0
+    property real iconPressScale: mouseHandler.pressed ? 0.9 : 1.0
     // 1:4 the distance between app : dock height; get width/height≈0.8
     implicitWidth: useColumnLayout ? Panel.rootObject.dockSize : Panel.rootObject.dockItemMaxSize * 0.8
     implicitHeight: useColumnLayout ? Panel.rootObject.dockItemMaxSize * 0.8 : Panel.rootObject.dockSize
@@ -38,7 +39,7 @@ AppletItem {
         id: icon
         anchors.centerIn: parent
         name: Applet.iconName
-        scale: Panel.rootObject.dockItemMaxSize * 9 / 14 / Dock.MAX_DOCK_TASKMANAGER_ICON_SIZE
+        scale: Panel.rootObject.dockItemMaxSize * 9 / 14 / Dock.MAX_DOCK_TASKMANAGER_ICON_SIZE * toggleworkspace.iconPressScale
         // 9:14 (iconSize/dockHeight)
         sourceSize: Qt.size(Dock.MAX_DOCK_TASKMANAGER_ICON_SIZE, Dock.MAX_DOCK_TASKMANAGER_ICON_SIZE)
         smooth: toggleworkspace.dockHoverMagnifyActive
@@ -54,6 +55,14 @@ AppletItem {
         NumberAnimation {
             duration: 80
             easing.type: Easing.OutQuad
+        }
+    }
+
+    Behavior on iconPressScale {
+        NumberAnimation {
+            duration: 64
+            alwaysRunToEnd: false
+            easing.type: Easing.OutCubic
         }
     }
 

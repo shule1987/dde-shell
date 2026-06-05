@@ -17,6 +17,7 @@ IconButton {
     property bool autoClosePopup: false
     property bool dockHoverMagnifyActive: false
     property real iconPressBrightness: pressed ? -0.16 : 0.0
+    property real iconPressScale: pressed ? 0.9 : 1.0
     readonly property bool drivesDockSpotlight: Window.window === Panel.rootObject
 
     padding: 4
@@ -82,6 +83,20 @@ IconButton {
 
     Binding {
         target: control.contentItem
+        property: "scale"
+        value: control.iconPressScale
+        restoreMode: Binding.RestoreNone
+    }
+
+    Binding {
+        target: control.contentItem
+        property: "transformOrigin"
+        value: Item.Center
+        restoreMode: Binding.RestoreNone
+    }
+
+    Binding {
+        target: control.contentItem
         property: "layer.enabled"
         value: true
         restoreMode: Binding.RestoreNone
@@ -111,6 +126,14 @@ IconButton {
         NumberAnimation {
             duration: 80
             easing.type: Easing.OutQuad
+        }
+    }
+
+    Behavior on iconPressScale {
+        NumberAnimation {
+            duration: 64
+            alwaysRunToEnd: false
+            easing.type: Easing.OutCubic
         }
     }
 

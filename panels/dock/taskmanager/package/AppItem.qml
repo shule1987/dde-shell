@@ -65,6 +65,7 @@ Item {
     readonly property bool unopenedAppItem: !root.popupItem && root.windows.length === 0
     readonly property bool iconPressed: mouseArea.pressed || contextMenuMouseArea.pressed
     property real iconPressBrightness: iconPressed ? -0.16 : 0.0
+    property real iconPressScale: iconPressed ? 0.9 : 1.0
     readonly property bool fashionHoverTransformPath: Panel.viewMode === Dock.FashionMode
         && root.displayMode === Dock.Fashion
         && !root.useColumnLayout
@@ -108,6 +109,14 @@ Item {
         NumberAnimation {
             duration: 80
             easing.type: Easing.OutQuad
+        }
+    }
+
+    Behavior on iconPressScale {
+        NumberAnimation {
+            duration: 64
+            alwaysRunToEnd: false
+            easing.type: Easing.OutCubic
         }
     }
 
@@ -345,7 +354,7 @@ Item {
                 width: root.popupItem ? root.popupIconSize : root.iconSize
                 height: root.popupItem ? root.popupIconSize : root.iconSize
                 anchors.centerIn: parent
-                scale: root.popupItem ? root.fashionHoverPopupScale : root.fashionHoverScale
+                scale: (root.popupItem ? root.fashionHoverPopupScale : root.fashionHoverScale) * root.iconPressScale
                 transformOrigin: Item.Center
                 transform: Translate {
                     y: root.fashionHoverTranslateY
@@ -364,7 +373,7 @@ Item {
                     sourceHeight: root.fashionHoverSourceIconSize
                     smooth: root.fashionHoverTransformPath || root.fashionHoverLiftActive
                     visible: !root.popupItem
-                    enableBrightnessEffect: !root.fashionHoverTransformPath
+                    enableBrightnessEffect: !root.fashionHoverTransformPath || root.iconPressed
                     brightness: root.iconPressBrightness
 
                     function mapToScene(px, py) {
@@ -427,10 +436,10 @@ Item {
                             switch (Panel.position) {
                             case Dock.Top:
                             case Dock.Bottom:
-                                return (root.height - icon.height) / 2
+                                return (root.height - iconMagnifyHost.height) / 2
                             case Dock.Left:
                             case Dock.Right:
-                                return (root.width - icon.width) / 2
+                                return (root.width - iconMagnifyHost.width) / 2
                             }
                         }
 
@@ -446,7 +455,7 @@ Item {
                                 return LaunchAnimation.Direction.Left
                             }
                         }
-                        target: icon
+                        target: iconMagnifyHost
                         loops: 1
                         running: false
                     }
@@ -465,7 +474,7 @@ Item {
                     smooth: root.fashionHoverTransformPath || root.fashionHoverLiftActive
                     colorTheme: root.colorTheme
                     visible: root.popupItem
-                    enableBrightnessEffect: !root.fashionHoverTransformPath
+                    enableBrightnessEffect: !root.fashionHoverTransformPath || root.iconPressed
                     brightness: root.iconPressBrightness
                 }
             }
