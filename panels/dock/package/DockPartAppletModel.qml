@@ -81,6 +81,10 @@ D.SortFilterModel {
         property var attachedAppletItem: null
         readonly property string pluginId: appletItem && appletItem.applet ? appletItem.applet.pluginId : ""
         readonly property bool isAiBarApplet: pluginId === "org.deepin.ds.dock.aibar"
+        readonly property bool horizontalFashionMode: Panel.rootObject
+            ? Panel.viewMode === Dock.FashionMode && !Panel.rootObject.useColumnLayout
+            : false
+        readonly property bool fixedFashionEntryIcon: horizontalFashionMode && delegateRoot.isFixedFashionEntryIcon(pluginId)
         readonly property bool horizontalAiBarApplet: isAiBarApplet
             && Panel.viewMode === Dock.FashionMode
             && !(Panel.rootObject && Panel.rootObject.useColumnLayout)
@@ -112,6 +116,15 @@ D.SortFilterModel {
         readonly property real aiBarRightPadding: horizontalAiBarApplet
             ? Math.max(0, aiBarLayoutWidth - aiBarContentWidth)
             : 0
+        property real fixedFashionHoverLiftProgress: fixedFashionEntryIcon && delegateHoverHandler.hovered ? 1.0 : 0.0
+        readonly property real fixedFashionHoverLiftSize: 4
+        readonly property real fixedFashionHoverSizeDelta: fixedFashionHoverLiftSize * fixedFashionHoverLiftProgress
+        readonly property real fixedFashionHoverScale: hoverTargetWidth > 0
+            ? 1.0 + fixedFashionHoverSizeDelta / hoverTargetWidth
+            : 1.0
+        readonly property real fixedFashionHoverTranslateY: -fixedFashionHoverSizeDelta / 2
+        readonly property bool fixedFashionHoverActive: fixedFashionEntryIcon
+            && (delegateHoverHandler.hovered || fixedFashionHoverLiftProgress > 0)
         implicitWidth: appletItem ? aiBarLayoutWidth : 0
         implicitHeight: appletItem ? appletItem.implicitHeight : 0
         rightPadding: aiBarRightPadding
@@ -133,6 +146,11 @@ D.SortFilterModel {
 
             implicitWidth: delegateRoot.appletItem ? delegateRoot.appletItem.implicitWidth : 0
             implicitHeight: delegateRoot.appletItem ? delegateRoot.appletItem.implicitHeight : 0
+            scale: delegateRoot.fixedFashionHoverScale
+            transformOrigin: Item.Center
+            transform: Translate {
+                y: delegateRoot.fixedFashionHoverTranslateY
+            }
         }
         background: AppletItemBackground {
             x: Math.round(!delegateRoot.isAiBarApplet || (Panel.rootObject && Panel.rootObject.useColumnLayout)
@@ -141,9 +159,12 @@ D.SortFilterModel {
             y: Math.round(!delegateRoot.isAiBarApplet || !(Panel.rootObject && Panel.rootObject.useColumnLayout)
                           ? (delegateRoot.height - height) / 2
                           : delegateRoot.hoverInset * -1)
-            width: delegateRoot.unifiedHoverBackgroundWidth
-            height: delegateRoot.unifiedHoverBackgroundHeight
+            width: delegateRoot.unifiedHoverBackgroundWidth + delegateRoot.fixedFashionHoverSizeDelta
+            height: delegateRoot.unifiedHoverBackgroundHeight + delegateRoot.fixedFashionHoverSizeDelta
             radius: height / 5
+            transform: Translate {
+                y: delegateRoot.fixedFashionHoverTranslateY
+            }
             enabled: false
             visible: delegateRoot.useUnifiedDockHoverBackground
             opacity: delegateHoverHandler.hovered ? 1 : 0
@@ -167,6 +188,25 @@ D.SortFilterModel {
             onTriggered: delegateRoot.syncAppletItem()
         }
 
+        Behavior on fixedFashionHoverLiftProgress {
+            NumberAnimation {
+                duration: delegateHoverHandler.hovered ? 24 : 96
+                alwaysRunToEnd: false
+                easing.type: Easing.OutCubic
+            }
+        }
+
+        function isFixedFashionEntryIcon(pluginId) {
+            switch (pluginId) {
+            case "org.deepin.ds.dock.launcherapplet":
+            case "org.deepin.ds.dock.searchitem":
+            case "org.deepin.ds.dock.multitaskview":
+                return true
+            default:
+                return false
+            }
+        }
+
         function scheduleSyncAppletItem() {
             if (appletItem) {
                 syncAppletItemTimer.restart()
@@ -186,6 +226,11 @@ D.SortFilterModel {
                 item.visible = Qt.binding(function() {
                     return item.shouldVisible === undefined || item.shouldVisible
                 })
+                if ("dockHoverMagnifyActive" in item) {
+                    item.dockHoverMagnifyActive = Qt.binding(function() {
+                        return delegateRoot.fixedFashionHoverActive
+                    })
+                }
                 attachedAppletItem = item
             } else {
                 attachedAppletItem = null

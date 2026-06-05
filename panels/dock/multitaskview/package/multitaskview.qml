@@ -4,6 +4,7 @@
 
 import QtQuick 2.15
 import QtQuick.Controls 2.15
+import Qt5Compat.GraphicalEffects
 
 import org.deepin.ds 1.0
 import org.deepin.dtk 1.0 as D
@@ -14,6 +15,8 @@ AppletItem {
     property bool useColumnLayout: Panel.position % 2
     property int dockOrder: 15
     property bool shouldVisible: Applet.visible
+    property bool dockHoverMagnifyActive: false
+    property real iconPressBrightness: mouseHandler.pressed ? -0.16 : 0.0
     // 1:4 the distance between app : dock height; get width/height≈0.8
     implicitWidth: useColumnLayout ? Panel.rootObject.dockSize : Panel.rootObject.dockItemMaxSize * 0.8
     implicitHeight: useColumnLayout ? Panel.rootObject.dockItemMaxSize * 0.8 : Panel.rootObject.dockSize
@@ -38,6 +41,20 @@ AppletItem {
         scale: Panel.rootObject.dockItemMaxSize * 9 / 14 / Dock.MAX_DOCK_TASKMANAGER_ICON_SIZE
         // 9:14 (iconSize/dockHeight)
         sourceSize: Qt.size(Dock.MAX_DOCK_TASKMANAGER_ICON_SIZE, Dock.MAX_DOCK_TASKMANAGER_ICON_SIZE)
+        smooth: toggleworkspace.dockHoverMagnifyActive
+        layer.enabled: true
+        layer.smooth: toggleworkspace.dockHoverMagnifyActive
+        layer.effect: BrightnessContrast {
+            brightness: toggleworkspace.iconPressBrightness
+            contrast: 0
+        }
+    }
+
+    Behavior on iconPressBrightness {
+        NumberAnimation {
+            duration: 80
+            easing.type: Easing.OutQuad
+        }
     }
 
     Timer {

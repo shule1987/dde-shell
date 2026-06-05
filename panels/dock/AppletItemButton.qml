@@ -4,6 +4,7 @@
 
 import QtQuick
 import QtQuick.Controls
+import Qt5Compat.GraphicalEffects
 import org.deepin.ds 1.0
 import org.deepin.ds.dock 1.0
 import org.deepin.dtk
@@ -14,6 +15,8 @@ IconButton {
     property real radius: 4
     property point lastSpotlightPoint: Qt.point(0, 0)
     property bool autoClosePopup: false
+    property bool dockHoverMagnifyActive: false
+    property real iconPressBrightness: pressed ? -0.16 : 0.0
     readonly property bool drivesDockSpotlight: Window.window === Panel.rootObject
 
     padding: 4
@@ -70,8 +73,45 @@ IconButton {
         isActive: control.isActive
     }
 
-    Component.onCompleted: {
-        contentItem.smooth = false
+    Binding {
+        target: control.contentItem
+        property: "smooth"
+        value: control.dockHoverMagnifyActive
+        restoreMode: Binding.RestoreNone
+    }
+
+    Binding {
+        target: control.contentItem
+        property: "layer.enabled"
+        value: true
+        restoreMode: Binding.RestoreNone
+    }
+
+    Binding {
+        target: control.contentItem
+        property: "layer.effect"
+        value: iconPressEffect
+        restoreMode: Binding.RestoreNone
+    }
+
+    Binding {
+        target: control.contentItem ? control.contentItem.layer : null
+        property: "smooth"
+        value: control.dockHoverMagnifyActive
+        restoreMode: Binding.RestoreNone
+    }
+
+    BrightnessContrast {
+        id: iconPressEffect
+        brightness: control.iconPressBrightness
+        contrast: 0
+    }
+
+    Behavior on iconPressBrightness {
+        NumberAnimation {
+            duration: 80
+            easing.type: Easing.OutQuad
+        }
     }
 
     HoverHandler {

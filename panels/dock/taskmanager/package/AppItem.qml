@@ -62,6 +62,30 @@ Item {
     property bool titleActive: enableTitle && titleLoader.active
     property int appTitleSpacing: 0
     property bool popupItem: root.itemKind === "group" || root.itemKind === "folder"
+    readonly property bool unopenedAppItem: !root.popupItem && root.windows.length === 0
+    readonly property bool iconPressed: mouseArea.pressed || contextMenuMouseArea.pressed
+    property real iconPressBrightness: iconPressed ? -0.16 : 0.0
+    readonly property bool fashionHoverTransformPath: Panel.viewMode === Dock.FashionMode
+        && root.displayMode === Dock.Fashion
+        && !root.useColumnLayout
+    readonly property bool fashionHoverLiftTarget: fashionHoverTransformPath
+        && hoverHandler.hovered
+        && !root.Drag.active
+    property real fashionHoverLiftProgress: fashionHoverLiftTarget ? 1.0 : 0.0
+    readonly property real fashionHoverLiftSize: 4
+    readonly property bool fashionHoverLiftActive: fashionHoverLiftTarget || fashionHoverLiftProgress > 0
+    readonly property real fashionHoverSizeDelta: fashionHoverLiftSize * fashionHoverLiftProgress
+    readonly property real fashionHoverScale: iconSize > 0
+        ? 1.0 + fashionHoverSizeDelta / iconSize
+        : 1.0
+    readonly property real fashionHoverPopupScale: popupIconSize > 0
+        ? 1.0 + fashionHoverSizeDelta / popupIconSize
+        : 1.0
+    readonly property real fashionHoverMaxIconSize: iconSize + fashionHoverLiftSize
+    readonly property real fashionHoverMaxPopupIconSize: popupIconSize + fashionHoverLiftSize
+    readonly property real fashionHoverSourceIconSize: fashionHoverTransformPath ? Dock.MAX_DOCK_TASKMANAGER_ICON_SIZE : iconSize
+    readonly property real fashionHoverSourcePopupIconSize: fashionHoverTransformPath ? Dock.MAX_DOCK_TASKMANAGER_ICON_SIZE : popupIconSize
+    readonly property real fashionHoverTranslateY: -fashionHoverLiftSize * fashionHoverLiftProgress / 2
     readonly property bool resizeOptimizationActive: Panel.isResizing || (Panel.rootObject && Panel.rootObject.isDragging)
     readonly property bool dockPopupContext: Window.window && Panel.popupWindow && Window.window === Panel.popupWindow
     property bool deferredWindowIconGeometryUpdate: false
@@ -79,6 +103,21 @@ Item {
     }
 
     implicitWidth: appItem.implicitWidth
+
+    Behavior on iconPressBrightness {
+        NumberAnimation {
+            duration: 80
+            easing.type: Easing.OutQuad
+        }
+    }
+
+    Behavior on fashionHoverLiftProgress {
+        NumberAnimation {
+            duration: root.fashionHoverLiftTarget ? 24 : 96
+            alwaysRunToEnd: false
+            easing.type: Easing.OutCubic
+        }
+    }
 
     function dockWindowGlobalPoint() {
         if (!Panel.rootObject) {
@@ -161,12 +200,26 @@ Item {
 
     function schedulePhysicalPixelFix() {
         deferredPhysicalPixelFix = true
+        if (fashionHoverTransformPath) {
+            icon.anchors.centerIn = icon.parent
+            return
+        }
         if (resizeOptimizationActive) {
             icon.anchors.centerIn = icon.parent
             return
         }
 
         fixPositionTimer.restart()
+    }
+
+    onFashionHoverLiftActiveChanged: {
+        if (fashionHoverTransformPath) {
+            fixPositionTimer.stop()
+            icon.anchors.centerIn = icon.parent
+            return
+        }
+
+        root.schedulePhysicalPixelFix()
     }
 
     onResizeOptimizationActiveChanged: {
@@ -224,10 +277,13 @@ Item {
 
             enabled: false
 
-            width: root.titleActive ? splitWidth : nonSplitWidth
-            height: nonSplitHeight
+            width: (root.titleActive ? splitWidth : nonSplitWidth) + root.fashionHoverSizeDelta
+            height: nonSplitHeight + root.fashionHoverSizeDelta
             radius: height / 5
             anchors.centerIn: parent
+            transform: Translate {
+                y: root.fashionHoverTranslateY
+            }
             isActive: root.itemActive
             opacity: (hoverHandler.hovered || (root.itemActive && root.windows.length > 0)) ? 1.0 : 0.0
             D.ColorSelector.hovered: hoverHandler.hovered
@@ -284,110 +340,134 @@ Item {
                 target: Panel
             }
 
-            TaskIcon {
-                id: icon
-                iconName: root.iconName
-                height: iconSize
-                width: iconSize
+            Item {
+                id: iconMagnifyHost
+                width: root.popupItem ? root.popupIconSize : root.iconSize
+                height: root.popupItem ? root.popupIconSize : root.iconSize
                 anchors.centerIn: parent
-                retainWhileLoading: true
-                smooth: false
-                visible: !root.popupItem
-
-                function mapToScene(px, py) {
-                    return parent.mapToItem(Window.window.contentItem, Qt.point(px, py))
+                scale: root.popupItem ? root.fashionHoverPopupScale : root.fashionHoverScale
+                transformOrigin: Item.Center
+                transform: Translate {
+                    y: root.fashionHoverTranslateY
                 }
 
-                function mapFromScene(px, py) {
-                    return parent.mapFromItem(Window.window.contentItem, Qt.point(px, py))
-                }
+                TaskIcon {
+                    id: icon
+                    iconName: root.iconName
+                    height: root.iconSize
+                    width: root.iconSize
+                    anchors.centerIn: parent
+                    retainWhileLoading: true
+                    visualWidth: root.iconSize
+                    visualHeight: root.iconSize
+                    sourceWidth: root.fashionHoverSourceIconSize
+                    sourceHeight: root.fashionHoverSourceIconSize
+                    smooth: root.fashionHoverTransformPath || root.fashionHoverLiftActive
+                    visible: !root.popupItem
+                    enableBrightnessEffect: !root.fashionHoverTransformPath
+                    brightness: root.iconPressBrightness
 
-                function fixPosition() {
-                    if (root.Drag.active || !parent || launchAnimation.running) {
-                        return
+                    function mapToScene(px, py) {
+                        return parent.mapToItem(Window.window.contentItem, Qt.point(px, py))
                     }
 
-                    if (root.resizeOptimizationActive) {
-                        anchors.centerIn = parent
-                        return
+                    function mapFromScene(px, py) {
+                        return parent.mapFromItem(Window.window.contentItem, Qt.point(px, py))
                     }
 
-                    anchors.centerIn = undefined
-                    var targetX = (parent.width - width) / 2
-                    var targetY = (parent.height - height) / 2
+                    function fixPosition() {
+                        if (root.Drag.active || !parent || launchAnimation.running || root.fashionHoverTransformPath) {
+                            return
+                        }
 
-                    var scenePos = mapToScene(targetX, targetY)
-                    
-                    var physicalX = Math.round(scenePos.x * Panel.devicePixelRatio)
-                    var physicalY = Math.round(scenePos.y * Panel.devicePixelRatio)
+                        if (root.resizeOptimizationActive) {
+                            anchors.centerIn = parent
+                            return
+                        }
 
-                    var localPos = mapFromScene(physicalX / Panel.devicePixelRatio, physicalY / Panel.devicePixelRatio)
+                        anchors.centerIn = undefined
+                        var targetX = (parent.width - width) / 2
+                        var targetY = (parent.height - height) / 2
 
-                    if (Math.abs(x - localPos.x) < 0.01 && Math.abs(y - localPos.y) < 0.01) {
-                        return
+                        var scenePos = mapToScene(targetX, targetY)
+
+                        var physicalX = Math.round(scenePos.x * Panel.devicePixelRatio)
+                        var physicalY = Math.round(scenePos.y * Panel.devicePixelRatio)
+
+                        var localPos = mapFromScene(physicalX / Panel.devicePixelRatio, physicalY / Panel.devicePixelRatio)
+
+                        if (Math.abs(x - localPos.x) < 0.01 && Math.abs(y - localPos.y) < 0.01) {
+                            return
+                        }
+
+                        x = localPos.x
+                        y = localPos.y
                     }
 
-                    x = localPos.x
-                    y = localPos.y
-                }
-
-                Timer {
-                    id: fixPositionTimer
-                    interval: 16
-                    repeat: false
-                    running: false
-                    onTriggered: {
-                        root.deferredPhysicalPixelFix = false
-                        icon.fixPosition()
-                    }
-                }
-
-                Connections {
-                    target: root
-                    function onIconGlobalPointChanged() {
-                        root.schedulePhysicalPixelFix()
-                    }
-                }
-                LaunchAnimation {
-                    id: launchAnimation
-                    launchSpace: {
-                        switch (Panel.position) {
-                        case Dock.Top:
-                        case Dock.Bottom:
-                            return (root.height - icon.height) / 2
-                        case Dock.Left:
-                        case Dock.Right:
-                            return (root.width - icon.width) / 2
+                    Timer {
+                        id: fixPositionTimer
+                        interval: 16
+                        repeat: false
+                        running: false
+                        onTriggered: {
+                            root.deferredPhysicalPixelFix = false
+                            icon.fixPosition()
                         }
                     }
 
-                    direction: {
-                        switch (Panel.position) {
-                        case Dock.Top:
-                            return LaunchAnimation.Direction.Down
-                        case Dock.Bottom:
-                            return LaunchAnimation.Direction.Up
-                        case Dock.Left:
-                            return LaunchAnimation.Direction.Right
-                        case Dock.Right:
-                            return LaunchAnimation.Direction.Left
+                    Connections {
+                        target: root
+                        function onIconGlobalPointChanged() {
+                            root.schedulePhysicalPixelFix()
                         }
                     }
-                    target: icon
-                    loops: 1
-                    running: false
-                }
-            }
+                    LaunchAnimation {
+                        id: launchAnimation
+                        launchSpace: {
+                            switch (Panel.position) {
+                            case Dock.Top:
+                            case Dock.Bottom:
+                                return (root.height - icon.height) / 2
+                            case Dock.Left:
+                            case Dock.Right:
+                                return (root.width - icon.width) / 2
+                            }
+                        }
 
-            PinnedItemIcon {
-                anchors.centerIn: parent
-                width: root.popupIconSize
-                height: root.popupIconSize
-                iconName: root.iconName
-                previewIcons: root.previewIcons
-                iconSize: root.popupIconSize
-                colorTheme: root.colorTheme
-                visible: root.popupItem
+                        direction: {
+                            switch (Panel.position) {
+                            case Dock.Top:
+                                return LaunchAnimation.Direction.Down
+                            case Dock.Bottom:
+                                return LaunchAnimation.Direction.Up
+                            case Dock.Left:
+                                return LaunchAnimation.Direction.Right
+                            case Dock.Right:
+                                return LaunchAnimation.Direction.Left
+                            }
+                        }
+                        target: icon
+                        loops: 1
+                        running: false
+                    }
+                }
+
+                PinnedItemIcon {
+                    id: pinnedIcon
+                    anchors.centerIn: parent
+                    width: root.popupIconSize
+                    height: root.popupIconSize
+                    iconName: root.iconName
+                    previewIcons: root.previewIcons
+                    iconSize: root.popupIconSize
+                    visualIconSize: root.popupIconSize
+                    sourceIconSize: root.fashionHoverSourcePopupIconSize
+                    smooth: root.fashionHoverTransformPath || root.fashionHoverLiftActive
+                    colorTheme: root.colorTheme
+                    visible: root.popupItem
+                    enableBrightnessEffect: !root.fashionHoverTransformPath
+                    brightness: root.iconPressBrightness
+                }
             }
         }
 
@@ -845,16 +925,13 @@ Item {
     }
 
     function onEntered() {
-        if (root.popupItem) {
-            if (toolTip.toolTipWindow && toolTip.toolTipWindow.visible) {
-                showToolTipNow()
-            } else {
-                toolTipShowTimer.start()
-            }
+        if (root.unopenedAppItem) {
+            toolTipShowTimer.stop()
+            showToolTipNow()
             return
         }
 
-        if (Qt.platform.pluginName === "xcb" && windows.length === 0) {
+        if (root.popupItem) {
             if (toolTip.toolTipWindow && toolTip.toolTipWindow.visible) {
                 showToolTipNow()
             } else {
@@ -902,7 +979,7 @@ Item {
             previewTimer.stop()
         }
 
-        if (root.popupItem || (Qt.platform.pluginName === "xcb" && windows.length === 0)) {
+        if (root.popupItem || root.unopenedAppItem) {
             toolTip.close()
             return
         }
@@ -982,7 +1059,9 @@ Item {
                 })
                 appItemSpotlightClearTimer.stop()
             }
-            toolTip.close()
+            if (!root.unopenedAppItem) {
+                toolTip.close()
+            }
             closeItemPreview()
         }
         onClicked: function (mouse) {
@@ -993,6 +1072,7 @@ Item {
             }
 
             if (root.windows.length === 0) {
+                toolTip.close()
                 launchAnimation.start();
                 TaskManager.requestNewInstance(index, "");
                 return;
@@ -1005,7 +1085,7 @@ Item {
             text: root.toolTipText
             toolTipX: DockPanelPositioner.x
             toolTipY: DockPanelPositioner.y
-            closeGraceInterval: 90
+            closeGraceInterval: root.unopenedAppItem ? 0 : 90
         }
 
         PanelToolTip {
