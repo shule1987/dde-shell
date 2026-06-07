@@ -79,11 +79,8 @@ Window {
             return 0
         }
 
-        // On X11 this fashion dock window manages its own bottom margin and width.
-        // Updating the emulated strut while the width changes makes KWin move the
-        // whole window up for a frame, so keep this window out of strut updates.
         if (dock.adaptiveFashionUsesDirectWindowGeometry) {
-            return 0
+            return dock.exclusionZoneThickness
         }
 
         return dock.exclusionZoneThickness
