@@ -176,6 +176,7 @@ DockPanel::DockPanel(QObject *parent)
     , m_containsMouse(false)
     , m_reportedContainsMouse(false)
     , m_isResizing(false)
+    , m_frontendGeometryReady(false)
     , m_cursorPosition(0, 0)
     , m_reportedCursorPosition(0, 0)
 {
@@ -282,6 +283,7 @@ bool DockPanel::init()
 
     QObject::connect(this, &DApplet::rootObjectChanged, this, [this]() {
         if (rootObject()) {
+            setFrontendGeometryReady(false);
             // those connections need connect after DPanel::init() which create QQuickWindow
             if (QGuiApplication::platformName() == QStringLiteral("xcb")) {
                 connect(window(), &QQuickWindow::xChanged, this, &DockPanel::onWindowGeometryChanged);
@@ -289,7 +291,6 @@ bool DockPanel::init()
             }
             connect(window(), &QQuickWindow::widthChanged, this, &DockPanel::onWindowGeometryChanged);
             connect(window(), &QQuickWindow::heightChanged, this, &DockPanel::onWindowGeometryChanged);
-            QMetaObject::invokeMethod(this, &DockPanel::onWindowGeometryChanged);
             if (showInPrimary())
                 updateDockScreen();
             else {
@@ -343,20 +344,78 @@ QRect DockPanel::frontendWindowRect()
     return m_frontendWindowRect;
 }
 
-void DockPanel::setFrontendWindowRect(int transformOffsetX, int transformOffsetY)
+bool DockPanel::setFrontendWindowRect(int transformOffsetX, int transformOffsetY)
 {
-    if(!window()) return;
+    if (!window() || !window()->screen()) {
+        return false;
+    }
 
     auto ratio = window()->devicePixelRatio();
     auto screenGeometry = window()->screen()->geometry();
     auto geometry = window()->geometry();
+    if (geometry.width() <= 0 || geometry.height() <= 0) {
+        if (geometryDebugLog()) {
+            qWarning() << "[dock-geometry]"
+                       << "frontend-skip"
+                       << "invalid-window"
+                       << "window=" << geometry
+                       << "frame=" << window()->frameGeometry()
+                       << "screen=" << screenGeometry
+                       << "offset=" << QPoint(transformOffsetX, transformOffsetY);
+        }
+        return false;
+    }
+
     const int xOffset = geometry.x() - screenGeometry.x() + transformOffsetX;
     const int yOffset = geometry.y() - screenGeometry.y() + transformOffsetY;
 
-    m_frontendWindowRect = QRect(screenGeometry.x() + xOffset * ratio,
-                                 screenGeometry.y() + yOffset * ratio,
-                                 geometry.width() * ratio,
-                                 geometry.height() * ratio);
+    const QRect frontendRect(screenGeometry.x() + xOffset * ratio,
+                             screenGeometry.y() + yOffset * ratio,
+                             geometry.width() * ratio,
+                             geometry.height() * ratio);
+    if (m_frontendWindowRect == frontendRect) {
+        return false;
+    }
+
+    m_frontendWindowRect = frontendRect;
+
+    if (geometryDebugLog()) {
+        qWarning() << "[dock-geometry]"
+                   << "frontend-set"
+                   << "window=" << geometry
+                   << "frame=" << window()->frameGeometry()
+                   << "screen=" << screenGeometry
+                   << "dpr=" << ratio
+                   << "offset=" << QPoint(transformOffsetX, transformOffsetY)
+                   << "frontend=" << m_frontendWindowRect;
+    }
+    return true;
+}
+
+bool DockPanel::frontendGeometryReady() const
+{
+    return m_frontendGeometryReady;
+}
+
+void DockPanel::setFrontendGeometryReady(bool ready)
+{
+    if (m_frontendGeometryReady == ready) {
+        return;
+    }
+
+    m_frontendGeometryReady = ready;
+    if (geometryDebugLog()) {
+        qWarning() << "[dock-geometry]"
+                   << "frontend-ready"
+                   << ready
+                   << "window=" << (window() ? window()->geometry() : QRect())
+                   << "frontend=" << m_frontendWindowRect;
+    }
+    Q_EMIT frontendGeometryReadyChanged(ready);
+
+    if (m_frontendGeometryReady && window()) {
+        QMetaObject::invokeMethod(this, &DockPanel::onWindowGeometryChanged, Qt::QueuedConnection);
+    }
 }
 
 ColorTheme DockPanel::colorTheme()
@@ -529,8 +588,22 @@ void DockPanel::setIndicatorStyle(const IndicatorStyle& style)
 
 void DockPanel::onWindowGeometryChanged()
 {
-    setFrontendWindowRect(0, 0);
-    Q_EMIT frontendWindowRectChanged(m_frontendWindowRect);
+    if (!m_frontendGeometryReady) {
+        if (geometryDebugLog() && window()) {
+            qWarning() << "[dock-geometry]"
+                       << "frontend-skip"
+                       << "not-ready"
+                       << "window=" << window()->geometry()
+                       << "frame=" << window()->frameGeometry()
+                       << "frontend=" << m_frontendWindowRect;
+        }
+        Q_EMIT geometryChanged(geometry());
+        return;
+    }
+
+    if (setFrontendWindowRect(0, 0)) {
+        Q_EMIT frontendWindowRectChanged(m_frontendWindowRect);
+    }
     Q_EMIT geometryChanged(geometry());
 }
 
@@ -577,6 +650,11 @@ bool DockPanel::debugMode() const
 #endif
 }
 
+bool DockPanel::geometryDebugLog() const
+{
+    return qEnvironmentVariableIsSet("DDE_SHELL_DOCK_GEOMETRY_DEBUG");
+}
+
 bool DockPanel::launcherShown() const
 {
     return m_launcherShown;
@@ -605,8 +683,22 @@ void DockPanel::openDockSettings() const
 
 void DockPanel::notifyDockPositionChanged(int offsetX, int offsetY)
 {
-    setFrontendWindowRect(offsetX, offsetY);
-    Q_EMIT frontendWindowRectChanged(m_frontendWindowRect);
+    if (!m_frontendGeometryReady) {
+        if (geometryDebugLog() && window()) {
+            qWarning() << "[dock-geometry]"
+                       << "frontend-skip"
+                       << "not-ready-notify"
+                       << "window=" << window()->geometry()
+                       << "frame=" << window()->frameGeometry()
+                       << "offset=" << QPoint(offsetX, offsetY)
+                       << "frontend=" << m_frontendWindowRect;
+        }
+        return;
+    }
+
+    if (setFrontendWindowRect(offsetX, offsetY)) {
+        Q_EMIT frontendWindowRectChanged(m_frontendWindowRect);
+    }
 }
 
 void DockPanel::reportMousePresence(bool containsMouse, const QPointF &cursorPosition)

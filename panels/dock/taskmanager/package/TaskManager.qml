@@ -75,6 +75,7 @@ ContainmentItem {
     property int appContainerHeight: useColumnLayout ? appContainer.implicitHeight : Panel.rootObject.dockSize
     property int appContainerTargetWidth: useColumnLayout ? Panel.rootObject.dockSize : appContainer.targetImplicitWidth
     property int appContainerTargetHeight: useColumnLayout ? appContainer.targetImplicitHeight : Panel.rootObject.dockSize
+    property bool adaptiveFashionDockDragCommitted: false
     
     implicitWidth: useColumnLayout
         ? Panel.rootObject.dockSize
@@ -817,17 +818,35 @@ ContainmentItem {
             property string pendingDockElement: ""
             property string pendingFolderUrl: ""
             property var activeDragSource: null
+            property bool ownsContextDragging: false
 
             function resetDndState(clearPlaceholder) {
+                const shouldClearPlaceholder = clearPlaceholder === undefined || clearPlaceholder
                 disconnectActiveDragSource()
-                if (clearPlaceholder === undefined || clearPlaceholder) {
+                if (shouldClearPlaceholder) {
                     taskmanager.Applet.clearDockPlaceholder()
+                    taskmanager.adaptiveFashionDockDragCommitted = false
                 }
+                endContextDragging()
                 launcherDndDesktopId = ""
                 launcherDndDragSource = ""
                 launcherDndWinId = ""
                 pendingDockElement = ""
                 pendingFolderUrl = ""
+            }
+
+            function beginContextDragging() {
+                if (!Panel.contextDragging) {
+                    ownsContextDragging = true
+                    Panel.contextDragging = true
+                }
+            }
+
+            function endContextDragging() {
+                if (ownsContextDragging) {
+                    Panel.contextDragging = false
+                    ownsContextDragging = false
+                }
             }
 
             function dragPointInside(drag) {
@@ -897,6 +916,10 @@ ContainmentItem {
             }
 
             function dragUrls(drag) {
+                if (!drag) {
+                    return []
+                }
+
                 const urls = drag.urls || []
                 if (urls.length > 0) {
                     let result = []
@@ -975,6 +998,10 @@ ContainmentItem {
             }
 
             function logDrag(prefix, drag, extra) {
+                if (!Panel.geometryDebugLog) {
+                    return
+                }
+
                 console.warn(prefix,
                              "source=", launcherDndDragSource,
                              "desktopId=", launcherDndDesktopId,
@@ -990,6 +1017,7 @@ ContainmentItem {
             }
 
             onEntered: function(drag) {
+                taskmanager.adaptiveFashionDockDragCommitted = false
                 launcherDndDragSource = dragString(drag, "text/x-dde-dock-dnd-source")
                 launcherDndWinId = dragString(drag, "text/x-dde-dock-dnd-winid")
                 launcherDndDesktopId = launcherDesktopIdFromDrag(drag)
@@ -1017,6 +1045,7 @@ ContainmentItem {
                 }
 
                 if (launcherDndDesktopId !== "") {
+                    beginContextDragging()
                     pendingDockElement = taskmanager.Applet.dockElementFromLauncherId(launcherDndDesktopId)
                     if (pendingDockElement === "" || taskmanager.Applet.stageDockPlaceholderByDesktopId(launcherDndDesktopId) === false) {
                         logDrag("taskmanager launcher drag rejected", drag)
@@ -1030,6 +1059,7 @@ ContainmentItem {
 
                 const folderUrl = candidateFolderUrl(drag)
                 if (folderUrl !== "") {
+                    beginContextDragging()
                     pendingFolderUrl = folderUrl
                     pendingDockElement = taskmanager.Applet.folderUrlToElementId(pendingFolderUrl)
                     if (pendingDockElement === "" || taskmanager.Applet.stageDockPlaceholderByFolderUrl(pendingFolderUrl) === false) {
@@ -1068,8 +1098,11 @@ ContainmentItem {
 
             onDropped: function(drop) {
                 logDrag("taskmanager drag dropped", drop)
-                Panel.contextDragging = false
-                if (pendingDockElement === "") return
+                if (pendingDockElement === "") {
+                    taskmanager.adaptiveFashionDockDragCommitted = false
+                    endContextDragging()
+                    return
+                }
 
                 const externalDockDrop = launcherDndDragSource !== "taskbar"
                 if (externalDockDrop) {
@@ -1088,6 +1121,7 @@ ContainmentItem {
                     }
 
                     taskmanager.Applet.commitDockPlaceholder()
+                    taskmanager.adaptiveFashionDockDragCommitted = true
                 }
 
                 drop.accepted = true

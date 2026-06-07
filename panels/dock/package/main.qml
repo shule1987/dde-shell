@@ -18,6 +18,8 @@ import org.deepin.dtk.style 1.0 as DStyle
 
 Window {
     id: dock
+    visible: false
+    opacity: dock.adaptiveFashionSurfaceSuppressed ? 0 : 1
     readonly property int resizeScreenEdgeMargin: 10
     readonly property int adaptiveFashionLeftWidth: 160
     readonly property int adaptiveFashionMaximumWidth: Math.max(0, Screen.width - resizeScreenEdgeMargin * 2)
@@ -72,9 +74,32 @@ Window {
     readonly property int dockSurfaceThickness: useColumnLayout ? dockSize : (adaptiveFashionMode ? dockSize + fashionVerticalPadding * 2 : dockSize)
     readonly property int windowThickness: dockSize
     readonly property int exclusionZoneThickness: dock.windowThickness + (adaptiveFashionMode ? fashionFloatingMargin : 0)
+    readonly property int layerShellExclusionZone: {
+        if (Panel.hideMode !== Dock.KeepShowing || Panel.hideState === Dock.Hide) {
+            return 0
+        }
+
+        // On X11 this fashion dock window manages its own bottom margin and width.
+        // Updating the emulated strut while the width changes makes KWin move the
+        // whole window up for a frame, so keep this window out of strut updates.
+        if (dock.adaptiveFashionUsesDirectWindowGeometry) {
+            return 0
+        }
+
+        return dock.exclusionZoneThickness
+    }
     readonly property real adaptiveFashionGridDisplayedWidth: adaptiveFashionMode
         ? dock.ceilToPhysicalPixel(gridLayout.implicitWidth)
         : 0
+    readonly property real adaptiveFashionGridEffectiveWidth: adaptiveFashionMode
+        && dock.adaptiveDockShellWidthFrozen
+        && dock.adaptiveDockShellWidthHold > 0
+        ? dock.ceilToPhysicalPixel(Math.max(0,
+                                            dock.adaptiveDockShellWidthHold
+                                            - (dockRightPart.visible
+                                               ? dock.fashionPartSpacing + dock.adaptiveFashionRightPartWidth
+                                               : 0)))
+        : adaptiveFashionGridDisplayedWidth
     readonly property real adaptiveFashionGridTargetWidth: adaptiveFashionMode
         ? dock.ceilToPhysicalPixel(Math.max(0,
                                             gridLayout.implicitWidth
@@ -84,6 +109,11 @@ Window {
     readonly property real adaptiveFashionGridDisplayedHeight: adaptiveFashionMode
         ? dock.ceilToPhysicalPixel(gridLayout.implicitHeight)
         : 0
+    readonly property real adaptiveFashionGridEffectiveHeight: adaptiveFashionMode
+        && dock.adaptiveDockShellWidthFrozen
+        && dock.adaptiveDockGridHeightHold > 0
+        ? dock.adaptiveDockGridHeightHold
+        : adaptiveFashionGridDisplayedHeight
     readonly property real adaptiveFashionLeftPartWidth: adaptiveFashionMode && dockLeftPart.visible
         ? dock.ceilToPhysicalPixel(dockLeftPart.implicitWidth)
         : 0
@@ -108,7 +138,7 @@ Window {
             return 0
         }
 
-        let width = adaptiveFashionGridDisplayedWidth
+        let width = adaptiveFashionGridEffectiveWidth
         if (dockRightPart.visible) {
             if (width > 0) {
                 width += fashionPartSpacing
@@ -141,10 +171,24 @@ Window {
         : Easing.InQuad
     readonly property bool adaptiveFashionWidthAnimationEnabled: adaptiveFashionMode
         && dock.adaptiveFashionUsesDirectWindowGeometry
+        && dock.adaptiveFashionGeometryReady
         && !dock.isDragging
+        && !Panel.contextDragging
+        && !dock.adaptiveDockShellWidthFrozen
         && !Panel.isResizing
         && !DDT.TraySortOrderModel.actionsAlwaysVisible
     property real adaptiveDockShellWidth: 0
+    property real adaptiveDockShellWidthHold: 0
+    property real adaptiveDockShellDragBaseWidth: 0
+    property real adaptiveDockGridHeightHold: 0
+    property bool adaptiveDockShellWidthFrozen: false
+    readonly property int adaptiveDockShellWidthReleaseDelay: 16
+    property bool adaptiveFashionGeometryReady: false
+    property double adaptiveFashionGeometryReadyStartedAt: 0
+    readonly property int adaptiveFashionGeometryReadyFallbackDelay: 6000
+    readonly property bool adaptiveFashionSurfaceSuppressed: adaptiveFashionMode
+        && Qt.platform.pluginName === "xcb"
+        && !dock.adaptiveFashionGeometryReady
     // TODO: 临时溢出逻辑，待后面修改
     property int dockLeftSpaceForCenter: adaptiveFashionMode ? 0 : (useColumnLayout ?
         (Screen.height - dockLeftPart.implicitHeight - dockRightPart.implicitHeight) :
@@ -255,10 +299,12 @@ Window {
     }
 
     function syncDockHiddenGeometryForCurrentMode() {
+        dock.logDockGeometry("sync-hidden:begin")
         dock.positionForAnimation = Panel.position
         hideShowAnimation.stop()
         dockAnimation.stop()
         changeDragAreaAnchor()
+        dock.setFrontendGeometryReady(!dock.adaptiveFashionInitialGeometryPending())
 
         if (dock.useWindowMarginBasedHideAnimation) {
             dockTransform.x = 0
@@ -266,6 +312,7 @@ Window {
             dock.animatedDockWindowMargin = dock.restingWindowMargin()
             dock.visible = false
             Panel.notifyDockPositionChanged(0, 0)
+            dock.logDockGeometry("sync-hidden:margin")
             return
         }
 
@@ -280,6 +327,7 @@ Window {
 
             dock.visible = false
             Panel.notifyDockPositionChanged(dockTransform.x, dockTransform.y)
+            dock.logDockGeometry("sync-hidden:transform")
             return
         }
 
@@ -288,13 +336,16 @@ Window {
         dock.animatedDockWindowMargin = dock.restingWindowMargin()
         dock.visible = false
         Panel.notifyDockPositionChanged(0, 0)
+        dock.logDockGeometry("sync-hidden:size")
     }
 
     function syncDockShownGeometryForCurrentMode() {
+        dock.logDockGeometry("sync-shown:begin")
         dock.positionForAnimation = Panel.position
         hideShowAnimation.stop()
         dockAnimation.stop()
         changeDragAreaAnchor()
+        dock.setFrontendGeometryReady(!dock.adaptiveFashionInitialGeometryPending())
 
         dockTransform.x = 0
         dockTransform.y = 0
@@ -302,6 +353,8 @@ Window {
         dock.visible = true
         Panel.notifyDockPositionChanged(0, 0)
         shownContentSyncTimer.restart()
+        dock.scheduleAdaptiveFashionGeometryReady()
+        dock.logDockGeometry("sync-shown:end")
     }
 
     function syncDockPresentationForCurrentMode() {
@@ -326,6 +379,111 @@ Window {
             - dock.fashionShadowRadius
             - dock.fashionShadowVerticalOffset
             - 4
+    }
+
+    function rectText(rect) {
+        if (!rect) {
+            return "(null)"
+        }
+
+        return "(" + Math.round(rect.x) + "," + Math.round(rect.y) + " "
+            + Math.round(rect.width) + "x" + Math.round(rect.height) + ")"
+    }
+
+    function logDockGeometry(reason) {
+        if (!Panel.geometryDebugLog) {
+            return
+        }
+
+        console.warn("[dock-geometry]", reason,
+                     "window=(" + Math.round(dock.x) + "," + Math.round(dock.y) + " "
+                         + Math.round(dock.width) + "x" + Math.round(dock.height) + ")",
+                     "transform=(" + Math.round(dockTransform.x) + "," + Math.round(dockTransform.y) + ")",
+                     "margin=" + Math.round(dock.animatedDockWindowMargin),
+                     "visible=" + dock.visible,
+                     "opacity=" + dock.opacity.toFixed(2),
+                     "ready=" + dock.adaptiveFashionGeometryReady,
+                     "hideState=" + Panel.hideState,
+                     "contextDragging=" + Panel.contextDragging,
+                     "containsMouse=" + Panel.containsMouse,
+                     "adaptiveShellWidth=" + Math.round(dock.adaptiveDockShellWidth),
+                     "holdWidth=" + Math.round(dock.adaptiveDockShellWidthHold),
+                     "adaptiveTargetWidth=" + Math.round(dock.adaptiveDockContentTargetWidth),
+                     "gridImplicitWidth=" + Math.round(dock.adaptiveFashionGridDisplayedWidth),
+                     "gridEffectiveWidth=" + Math.round(dock.adaptiveFashionGridEffectiveWidth),
+                     "gridWidth=" + Math.round(gridLayout.width),
+                     "gridY=" + Math.round(gridLayout.y),
+                     "gridImplicitHeight=" + Math.round(dock.adaptiveFashionGridDisplayedHeight),
+                     "gridEffectiveHeight=" + Math.round(dock.adaptiveFashionGridEffectiveHeight),
+                     "gridHeight=" + Math.round(gridLayout.height),
+                     "centerY=" + Math.round(dockCenterPart.y),
+                     "centerWidth=" + Math.round(dockCenterPart.width),
+                     "centerHeight=" + Math.round(dockCenterPart.height),
+                     "centerImplicitWidth=" + Math.round(dockCenterPart.implicitWidth),
+                     "centerTargetWidth=" + Math.round(dockCenterPart.targetImplicitWidth),
+                     "taskTargetWidth=" + Math.round(dockCenterPart.taskmanagerAppContainerTargetWidth),
+                     "rightY=" + Math.round(dockRightPart.y),
+                     "rightHeight=" + Math.round(dockRightPart.height),
+                     "rightTargetWidth=" + Math.round(dock.adaptiveFashionRightPartWidth),
+                     "rightCount=" + dockRightPartModel.count,
+                     "dragCommitted=" + dock.adaptiveFashionDockDragCommitted(),
+                     "frontend=" + rectText(Panel.frontendWindowRect))
+    }
+
+    function adaptiveFashionInitialGeometryPending() {
+        return dock.adaptiveFashionMode
+            && Qt.platform.pluginName === "xcb"
+            && !dock.adaptiveFashionGeometryReady
+    }
+
+    function setFrontendGeometryReady(ready) {
+        if (Panel.frontendGeometryReady !== ready) {
+            Panel.frontendGeometryReady = ready
+        }
+    }
+
+    function adaptiveFashionInitialContentReady() {
+        if (!dock.adaptiveFashionMode || Qt.platform.pluginName !== "xcb") {
+            return true
+        }
+
+        if (dock.adaptiveDockContentTargetWidth <= 0) {
+            return false
+        }
+
+        const minimumTaskmanagerWidth = Math.max(dock.dockItemMaxSize * 4, 260)
+        const taskmanagerReady = dockCenterPart.taskmanagerRootObject
+            && dockCenterPart.taskmanagerAppContainerTargetWidth >= minimumTaskmanagerWidth
+        if (taskmanagerReady) {
+            return true
+        }
+
+        if (dock.adaptiveFashionGeometryReadyStartedAt <= 0) {
+            return false
+        }
+
+        return Date.now() - dock.adaptiveFashionGeometryReadyStartedAt
+            >= dock.adaptiveFashionGeometryReadyFallbackDelay
+    }
+
+    function scheduleAdaptiveFashionGeometryReady() {
+        if (!dock.adaptiveFashionMode || Qt.platform.pluginName !== "xcb") {
+            dock.adaptiveFashionGeometryReady = true
+            dock.setFrontendGeometryReady(true)
+            dock.adaptiveFashionGeometryReadyStartedAt = 0
+            return
+        }
+
+        if (dock.adaptiveFashionGeometryReady) {
+            dock.setFrontendGeometryReady(true)
+            dock.adaptiveFashionGeometryReadyStartedAt = 0
+            return
+        }
+
+        if (dock.adaptiveFashionGeometryReadyStartedAt <= 0) {
+            dock.adaptiveFashionGeometryReadyStartedAt = Date.now()
+        }
+        adaptiveFashionGeometryReadyTimer.restart()
     }
 
     function restingWindowMargin() {
@@ -459,10 +617,122 @@ Window {
         }
 
         if (adaptiveDockContentTargetWidth > 0) {
-            return dock.ceilToPhysicalPixel(adaptiveDockContentTargetWidth)
+            return dock.boundedAdaptiveFashionShellWidth(adaptiveDockContentTargetWidth)
         }
 
-        return dock.ceilToPhysicalPixel(adaptiveDockContentWidth)
+        return dock.boundedAdaptiveFashionShellWidth(adaptiveDockContentWidth)
+    }
+
+    function boundedAdaptiveFashionShellWidth(width) {
+        if (!Number.isFinite(width) || width <= 0) {
+            return 0
+        }
+
+        if (!adaptiveFashionMode) {
+            return dock.ceilToPhysicalPixel(width)
+        }
+
+        return dock.ceilToPhysicalPixel(Math.min(width, adaptiveFashionMaximumWidth))
+    }
+
+    function adaptiveFashionTaskPlaceholderWidth() {
+        const taskmanagerRoot = dockCenterPart.taskmanagerRootObject
+        if (taskmanagerRoot
+                && taskmanagerRoot.adaptiveFashionItemWidth !== undefined
+                && Number.isFinite(taskmanagerRoot.adaptiveFashionItemWidth)
+                && taskmanagerRoot.adaptiveFashionItemWidth > 0) {
+            return dock.ceilToPhysicalPixel(taskmanagerRoot.adaptiveFashionItemWidth)
+        }
+
+        const iconWidth = Math.round(dock.dockItemMaxSize * 9 / 14)
+        return dock.ceilToPhysicalPixel(iconWidth + Math.max(10, iconWidth / 3))
+    }
+
+    function adaptiveFashionDragShellWidth(baseWidth) {
+        return dock.boundedAdaptiveFashionShellWidth(baseWidth + dock.adaptiveFashionTaskPlaceholderWidth())
+    }
+
+    function adaptiveFashionDockDragCommitted() {
+        const taskmanagerRoot = dockCenterPart.taskmanagerRootObject
+        return taskmanagerRoot
+            && taskmanagerRoot.adaptiveFashionDockDragCommitted !== undefined
+            && taskmanagerRoot.adaptiveFashionDockDragCommitted
+    }
+
+    function adaptiveDockShellWidthReleaseTarget() {
+        if (dock.adaptiveDockShellDragBaseWidth > 0 && dock.adaptiveDockShellWidthHold > 0) {
+            return dock.adaptiveFashionDockDragCommitted()
+                ? Math.max(dock.adaptiveDockShellWidthHold, dock.effectiveAdaptiveFashionShellWidth())
+                : dock.adaptiveDockShellDragBaseWidth
+        }
+
+        return dock.effectiveAdaptiveFashionShellWidth()
+    }
+
+    function cancelledAdaptiveDockReleaseStillSettling() {
+        if (!dock.adaptiveDockShellWidthFrozen
+                || Panel.contextDragging
+                || dock.adaptiveFashionDockDragCommitted()
+                || dock.adaptiveDockShellDragBaseWidth <= 0) {
+            return false
+        }
+
+        return dock.effectiveAdaptiveFashionShellWidth() > dock.adaptiveDockShellDragBaseWidth + 0.5
+    }
+
+    function stopAdaptiveDockShellWidthHoldAnimation() {
+        adaptiveDockShellWidthReleaseAnimation.completeOnStopped = false
+        adaptiveDockShellWidthReleaseAnimation.stop()
+    }
+
+    function animateAdaptiveDockShellWidthHold(targetWidth, completeOnStopped) {
+        dock.stopAdaptiveDockShellWidthHoldAnimation()
+        if (targetWidth <= 0 || Math.abs(dock.adaptiveDockShellWidthHold - targetWidth) < 0.5) {
+            dock.adaptiveDockShellWidthHold = targetWidth
+            if (completeOnStopped) {
+                dock.finishAdaptiveDockShellWidthRelease()
+            }
+            return
+        }
+
+        adaptiveDockShellWidthReleaseAnimation.from = dock.adaptiveDockShellWidthHold
+        adaptiveDockShellWidthReleaseAnimation.to = targetWidth
+        adaptiveDockShellWidthReleaseAnimation.completeOnStopped = completeOnStopped
+        adaptiveDockShellWidthReleaseAnimation.start()
+    }
+
+    function finishAdaptiveDockShellWidthRelease() {
+        adaptiveDockShellWidthReleaseAnimation.completeOnStopped = false
+        if (dock.cancelledAdaptiveDockReleaseStillSettling()) {
+            dock.adaptiveDockShellWidthHold = dock.adaptiveDockShellDragBaseWidth
+            adaptiveDockShellWidthReleaseTimer.restart()
+            dock.logDockGeometry("context-dragging:wait-clear-placeholder")
+            return
+        }
+
+        dock.adaptiveDockShellWidthFrozen = false
+        dock.adaptiveDockShellWidthHold = 0
+        dock.adaptiveDockShellDragBaseWidth = 0
+        dock.adaptiveDockGridHeightHold = 0
+        dock.logDockGeometry("context-dragging:release-width")
+        dock.scheduleAdaptiveFashionDockSizeSync()
+        dock.scheduleFrontendGeometrySync()
+    }
+
+    function startAdaptiveDockShellWidthRelease() {
+        if (Panel.contextDragging) {
+            return
+        }
+
+        const targetWidth = dock.adaptiveDockShellWidthReleaseTarget()
+        if (!dock.adaptiveDockShellWidthFrozen
+                || dock.adaptiveDockShellWidthHold <= 0
+                || targetWidth <= 0) {
+            dock.finishAdaptiveDockShellWidthRelease()
+            return
+        }
+
+        dock.animateAdaptiveDockShellWidthHold(targetWidth, true)
     }
 
     function scheduleAdaptiveFashionDockSizeSync() {
@@ -542,7 +812,7 @@ Window {
         ? (dock.adaptiveFashionTopMode ? DLayerShellWindow.AnchorTop : DLayerShellWindow.AnchorBottom)
         : position2Anchors(positionForAnimation)
     DLayerShellWindow.layer: DLayerShellWindow.LayerOverlay
-    DLayerShellWindow.exclusionZone: Panel.hideMode === Dock.KeepShowing ? dock.exclusionZoneThickness : 0
+    DLayerShellWindow.exclusionZone: dock.layerShellExclusionZone
     DLayerShellWindow.leftMargin: dock.adaptiveFashionUsesDirectWindowGeometry
         ? 0
         : (adaptiveFashionMode ? dock.adaptiveHorizontalMarginForContentWidth(dock.adaptiveDockShellWidth) : 0)
@@ -572,6 +842,10 @@ Window {
     // 参数默认值见： https://github.com/linuxdeepin/qt5platform-plugins/blob/master/xcb/dframewindow.h#L122
     // 需要注意，shadowRadius不能直接套用于“扩散”参数，拿到不透明度100%的设计图确定radius更合适一些。
     D.DWindow.shadowColor: {
+        if (dock.adaptiveFashionSurfaceSuppressed) {
+            return Qt.rgba(0, 0, 0, 0)
+        }
+
         if (dockAnimation.running) {
             return Qt.rgba(0, 0, 0, 0)
         }
@@ -587,8 +861,8 @@ Window {
         return Qt.rgba(0, 0, 0, 0.1)
     }
     D.DWindow.shadowOffset: dock.adaptiveFashionMode ? Qt.point(0, dock.fashionShadowVerticalOffset) : Qt.point(0, 0)
-    D.DWindow.shadowRadius: dock.adaptiveFashionMode ? dock.fashionShadowRadius : 40
-    D.DWindow.borderWidth: dock.adaptiveFashionMode ? 1 : ((hideShowAnimation.running || dockAnimation.running) ? 0 : 1)
+    D.DWindow.shadowRadius: dock.adaptiveFashionSurfaceSuppressed ? 0 : (dock.adaptiveFashionMode ? dock.fashionShadowRadius : 40)
+    D.DWindow.borderWidth: dock.adaptiveFashionSurfaceSuppressed ? 0 : (dock.adaptiveFashionMode ? 1 : ((hideShowAnimation.running || dockAnimation.running) ? 0 : 1))
     D.DWindow.enableBlurWindow: Qt.platform.pluginName !== "xcb"
     D.DWindow.themeType: Panel.colorTheme
     D.DWindow.borderColor: dock.dockWindowBorderColor
@@ -605,22 +879,72 @@ Window {
     }
 
     onAdaptiveFashionModeChanged: {
+        if (dock.adaptiveFashionMode && Qt.platform.pluginName === "xcb") {
+            dock.adaptiveFashionGeometryReady = false
+            dock.adaptiveFashionGeometryReadyStartedAt = 0
+            dock.setFrontendGeometryReady(false)
+        } else {
+            adaptiveFashionGeometryReadyTimer.stop()
+            dock.setFrontendGeometryReady(true)
+            dock.adaptiveFashionGeometryReadyStartedAt = 0
+        }
+        dock.logDockGeometry("adaptive-fashion-mode-changed")
         updateAppItems()
         dock.refreshAdaptiveFashionGeometry()
+    }
+    onAdaptiveFashionUsesDirectWindowGeometryChanged: {
+        if (dock.adaptiveFashionMode && Qt.platform.pluginName === "xcb") {
+            dock.adaptiveFashionGeometryReady = false
+            dock.adaptiveFashionGeometryReadyStartedAt = 0
+            dock.setFrontendGeometryReady(false)
+            dock.scheduleAdaptiveFashionGeometryReady()
+        } else {
+            adaptiveFashionGeometryReadyTimer.stop()
+            dock.setFrontendGeometryReady(true)
+            dock.adaptiveFashionGeometryReadyStartedAt = 0
+        }
+        dock.logDockGeometry("adaptive-fashion-direct-geometry-changed")
     }
 
     onAdaptiveDockContentWidthChanged: {
         if (dock.adaptiveFashionMode) {
+            if (dock.adaptiveDockShellWidthFrozen) {
+                dock.logDockGeometry("adaptive-content-width-changed:frozen")
+                return
+            }
+
             Panel.notifyDockPositionChanged(0, 0)
+            dock.scheduleAdaptiveFashionGeometryReady()
+            dock.logDockGeometry("adaptive-content-width-changed")
         }
     }
     onAdaptiveDockContentTargetWidthChanged: {
+        if (dock.adaptiveDockShellWidthFrozen) {
+            dock.logDockGeometry("adaptive-content-target-width-changed:frozen")
+            if (!Panel.contextDragging) {
+                adaptiveDockShellWidthReleaseTimer.restart()
+            }
+            return
+        }
+
+        dock.logDockGeometry("adaptive-content-target-width-changed")
+        dock.scheduleAdaptiveFashionGeometryReady()
         dock.scheduleAdaptiveFashionDockSizeSync()
     }
     onAdaptiveFashionMaximumWidthChanged: dock.scheduleAdaptiveFashionDockSizeSync()
     onWidthChanged: {
-        if (dock.adaptiveFashionMode) {
+        if (dock.adaptiveFashionMode && !dock.adaptiveDockShellWidthFrozen) {
             dock.scheduleAdaptiveFashionDockSizeSync()
+        }
+    }
+    onAdaptiveDockShellWidthChanged: {
+        if (dock.adaptiveFashionMode && dock.adaptiveDockShellWidthFrozen) {
+            dock.logDockGeometry("adaptive-shell-width-changed:frozen")
+        }
+    }
+    onAdaptiveFashionGridEffectiveHeightChanged: {
+        if (dock.adaptiveFashionMode && dock.adaptiveDockShellWidthFrozen) {
+            dock.logDockGeometry("adaptive-grid-height-changed:frozen")
         }
     }
 
@@ -630,7 +954,11 @@ Window {
     Binding {
         target: dock
         property: "adaptiveDockShellWidth"
-        value: dock.effectiveAdaptiveFashionShellWidth()
+        value: dock.adaptiveFashionUsesDirectWindowGeometry
+            && dock.adaptiveDockShellWidthFrozen
+            && dock.adaptiveDockShellWidthHold > 0
+            ? dock.adaptiveDockShellWidthHold
+            : dock.effectiveAdaptiveFashionShellWidth()
         restoreMode: Binding.RestoreNone
     }
 
@@ -670,9 +998,11 @@ Window {
             if (dock.visible) {
                 shownContentSyncTimer.restart()
             }
+            dock.logDockGeometry("hide-show:finalize")
         }
 
         function start() {
+            dock.logDockGeometry("hide-show:start")
             dock.visible = true
 
             if (useWindowMarginBasedAnimation) {
@@ -681,6 +1011,7 @@ Window {
                 hideShowMarginAnimation.to = dock.restingWindowMargin()
                 hideShowMarginAnimation.duration = Panel.hideState !== Dock.Hide ? showDuration : hideDuration
                 hideShowMarginAnimation.start()
+                dock.logDockGeometry("hide-show:start-margin")
                 return
             }
 
@@ -692,6 +1023,7 @@ Window {
                 hideShowTransformAnimation.to = Panel.hideState !== Dock.Hide ? 0 : dock.hiddenTransformOffset()
                 hideShowTransformAnimation.duration = Panel.hideState !== Dock.Hide ? showDuration : hideDuration
                 hideShowTransformAnimation.start()
+                dock.logDockGeometry("hide-show:start-transform")
                 return
             }
 
@@ -702,6 +1034,7 @@ Window {
             hideShowSizeAnimation.to = Panel.hideState !== Dock.Hide ? dock.windowThickness : 1
             hideShowSizeAnimation.duration = Panel.hideState !== Dock.Hide ? showDuration : hideDuration
             hideShowSizeAnimation.start()
+            dock.logDockGeometry("hide-show:start-size")
         }
 
         function restart() {
@@ -806,6 +1139,58 @@ Window {
         }
     }
 
+    Timer {
+        id: adaptiveFashionGeometryReadyTimer
+        interval: 180
+        repeat: false
+        onTriggered: {
+            if (!dock.adaptiveFashionInitialContentReady()) {
+                dock.logDockGeometry("adaptive-geometry-wait-content")
+                adaptiveFashionGeometryReadyTimer.restart()
+                return
+            }
+
+            dock.adaptiveFashionGeometryReady = true
+            dock.adaptiveFashionGeometryReadyStartedAt = 0
+            dock.setFrontendGeometryReady(true)
+            dock.logDockGeometry("adaptive-geometry-ready")
+            if (Panel.hideState !== Dock.Hide) {
+                dock.syncDockShownGeometryForCurrentMode()
+            }
+            dock.scheduleFrontendGeometrySync()
+        }
+    }
+
+    Timer {
+        id: adaptiveDockShellWidthReleaseTimer
+        interval: dock.adaptiveDockShellWidthReleaseDelay
+        repeat: false
+        onTriggered: {
+            if (Panel.contextDragging) {
+                return
+            }
+
+            dock.startAdaptiveDockShellWidthRelease()
+        }
+    }
+
+    NumberAnimation {
+        id: adaptiveDockShellWidthReleaseAnimation
+        target: dock
+        property: "adaptiveDockShellWidthHold"
+        duration: dock.adaptiveFashionWidthAnimationDuration
+        easing.type: Easing.OutCubic
+        property bool completeOnStopped: false
+
+        onStopped: {
+            if (!completeOnStopped) {
+                return
+            }
+
+            dock.finishAdaptiveDockShellWidthRelease()
+        }
+    }
+
     SequentialAnimation {
         id: dockAnimation
         property bool useTransformBasedAnimation: Qt.platform.pluginName === "xcb"
@@ -819,6 +1204,7 @@ Window {
 
         function startAnimation(showing) {
             isShowing = showing;
+            dock.logDockGeometry(showing ? "dock-animation:start-show" : "dock-animation:start-hide")
             start();
         }
 
@@ -866,6 +1252,7 @@ Window {
 
         onStarted: {
             dock.visible = true;
+            dock.logDockGeometry("dock-animation:started")
         }
 
         onStopped: {
@@ -881,6 +1268,7 @@ Window {
 
             dock.positionForAnimation = Panel.position;
             changeDragAreaAnchor()
+            dock.logDockGeometry("dock-animation:stopped")
             // If this was a hide animation during position change, prepare for show animation
             if (isPositionChanging && !isShowing) {
                 isPositionChanging = false;
@@ -1079,7 +1467,9 @@ Window {
             id: dockBackgroundBlur
             control: parent
             anchors.fill: parent
-            visible: !dock.useTopRoundedFashionBackground && !dock.useExternalFashionAutoHideSurface
+            visible: !dock.adaptiveFashionSurfaceSuppressed
+                && !dock.useTopRoundedFashionBackground
+                && !dock.useExternalFashionAutoHideSurface
             cornerRadius: dock.adaptiveFashionMode ? dock.fashionBackgroundRadius : 0
             blendColor: {
                 if (valid) {
@@ -1091,7 +1481,8 @@ Window {
 
         FashionBackgroundInnerBorder {
             anchors.fill: parent
-            visible: dock.adaptiveFashionMode
+            visible: !dock.adaptiveFashionSurfaceSuppressed
+                && dock.adaptiveFashionMode
                 && !dock.useTopRoundedFashionBackground
                 && !dock.useExternalFashionAutoHideSurface
             cornerRadius: dock.fashionBackgroundRadius
@@ -1103,7 +1494,9 @@ Window {
         Item {
             id: topRoundedFashionBackground
             anchors.fill: parent
-            visible: dock.useTopRoundedFashionBackground && !dock.useExternalFashionAutoHideSurface
+            visible: !dock.adaptiveFashionSurfaceSuppressed
+                && dock.useTopRoundedFashionBackground
+                && !dock.useExternalFashionAutoHideSurface
 
             Item {
                 id: topRoundedFashionSurface
@@ -1341,14 +1734,14 @@ Window {
                 target: gridLayout
                 property: "width"
                 when: dock.adaptiveFashionMode
-                value: dock.adaptiveFashionGridDisplayedWidth
+                value: dock.adaptiveFashionGridEffectiveWidth
             }
 
             Binding {
                 target: gridLayout
                 property: "height"
                 when: dock.adaptiveFashionMode
-                value: dock.adaptiveFashionGridDisplayedHeight
+                value: dock.adaptiveFashionGridEffectiveHeight
             }
 
             Item {
@@ -1532,7 +1925,7 @@ Window {
                 target: dockRightPart
                 property: "x"
                 when: dock.adaptiveFashionMode
-                value: dock.roundToPhysicalPixel(gridLayout.x + dock.adaptiveFashionGridDisplayedWidth + (dock.adaptiveFashionGridDisplayedWidth > 0 ? dock.fashionPartSpacing : 0))
+                value: dock.roundToPhysicalPixel(gridLayout.x + dock.adaptiveFashionGridEffectiveWidth + (dock.adaptiveFashionGridEffectiveWidth > 0 ? dock.fashionPartSpacing : 0))
             }
 
             Loader {
@@ -1753,6 +2146,38 @@ Window {
                 }
             }
         }
+        function onContextDraggingChanged() {
+            if (!Panel.contextDragging) {
+                dock.logDockGeometry("context-dragging:false")
+                if (dock.adaptiveDockShellWidthFrozen && dock.adaptiveDockShellWidthHold > 0) {
+                    adaptiveDockShellWidthReleaseTimer.stop()
+                    dock.stopAdaptiveDockShellWidthHoldAnimation()
+                    dock.startAdaptiveDockShellWidthRelease()
+                } else {
+                    dock.adaptiveDockShellWidthHold = 0
+                    dock.adaptiveDockShellDragBaseWidth = 0
+                    dock.adaptiveDockGridHeightHold = 0
+                }
+                return
+            }
+
+            adaptiveDockShellWidthReleaseTimer.stop()
+            dock.stopAdaptiveDockShellWidthHoldAnimation()
+            dock.adaptiveDockShellDragBaseWidth = Math.max(1, dock.adaptiveDockShellWidth > 0
+                ? dock.adaptiveDockShellWidth
+                : dock.effectiveAdaptiveFashionShellWidth())
+            const dragShellWidth = dock.adaptiveFashionDragShellWidth(dock.adaptiveDockShellDragBaseWidth)
+            dock.adaptiveDockShellWidthHold = dock.adaptiveDockShellDragBaseWidth
+            dock.adaptiveDockGridHeightHold = dock.adaptiveFashionGridDisplayedHeight > 0
+                ? dock.adaptiveFashionGridDisplayedHeight
+                : gridLayout.height
+            dock.adaptiveDockShellWidthFrozen = true
+            dock.animateAdaptiveDockShellWidthHold(dragShellWidth, false)
+            dock.logDockGeometry("context-dragging:true")
+            hideTimer.stop()
+            dock.syncDockShownGeometryForCurrentMode()
+            dock.scheduleFrontendGeometrySync()
+        }
         function onRequestClosePopup() {
             let popup = Panel.popupWindow
             DS.closeChildrenWindows(popup)
@@ -1803,6 +2228,8 @@ Window {
     }
 
     Component.onCompleted: {
+        dock.logDockGeometry("component-completed:begin")
+        dock.setFrontendGeometryReady(false)
         Panel.toolTipWindow.windowThemeType = Qt.binding(function(){
             return Panel.colorTheme
         })
@@ -1832,6 +2259,11 @@ Window {
         })
 
         dock.itemIconSizeBase = dock.dockItemMaxSize
+        dock.adaptiveFashionGeometryReady = false
+        dock.adaptiveFashionGeometryReadyStartedAt = 0
+        dock.logDockGeometry("component-completed:before-sync")
         dock.syncDockPresentationForCurrentMode()
+        dock.scheduleAdaptiveFashionGeometryReady()
+        dock.logDockGeometry("component-completed:end")
     }
 }

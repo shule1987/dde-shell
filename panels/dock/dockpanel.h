@@ -23,6 +23,7 @@ class DockPanel : public DS_NAMESPACE::DPanel, public QDBusContext
     Q_PROPERTY(QRect geometry READ geometry FINAL)
 
     Q_PROPERTY(QRect frontendWindowRect READ frontendWindowRect NOTIFY frontendWindowRectChanged FINAL)
+    Q_PROPERTY(bool frontendGeometryReady READ frontendGeometryReady WRITE setFrontendGeometryReady NOTIFY frontendGeometryReadyChanged FINAL)
     Q_PROPERTY(bool compositorReady READ compositorReady WRITE setCompositorReady NOTIFY compositorReadyChanged FINAL)
 
     Q_PROPERTY(HideState hideState READ hideState WRITE setHideState NOTIFY hideStateChanged FINAL)
@@ -42,6 +43,7 @@ class DockPanel : public DS_NAMESPACE::DPanel, public QDBusContext
     Q_PROPERTY(qreal devicePixelRatio READ devicePixelRatio NOTIFY devicePixelRatioChanged FINAL)
 
     Q_PROPERTY(bool debugMode READ debugMode FINAL CONSTANT)
+    Q_PROPERTY(bool geometryDebugLog READ geometryDebugLog FINAL CONSTANT)
     Q_PROPERTY(bool launcherShown READ launcherShown NOTIFY launcherShownChanged FINAL)
 
     Q_PROPERTY(bool contextDragging READ contextDragging WRITE setContextDragging NOTIFY contextDraggingChanged FINAL)
@@ -59,7 +61,9 @@ public:
 
     QRect geometry();
     QRect frontendWindowRect();
-    void setFrontendWindowRect(int transformOffsetX, int transformOffsetY);
+    bool setFrontendWindowRect(int transformOffsetX, int transformOffsetY);
+    bool frontendGeometryReady() const;
+    void setFrontendGeometryReady(bool ready);
 
     HideState hideState();
 
@@ -88,6 +92,7 @@ public:
     void setCompositorReady(bool ready);
 
     bool debugMode() const;
+    bool geometryDebugLog() const;
     bool launcherShown() const;
     void setFullscreenLauncherShown(bool shown);
 
@@ -134,6 +139,7 @@ private Q_SLOTS:
 Q_SIGNALS:
     void geometryChanged(QRect geometry);
     void frontendWindowRectChanged(QRect frontendWindowRect);
+    void frontendGeometryReadyChanged(bool ready);
     void hideStateChanged(HideState state);
     void colorThemeChanged(ColorTheme theme);
     void compositorReadyChanged();
@@ -178,6 +184,7 @@ private:
     bool m_containsMouse;
     bool m_reportedContainsMouse;
     bool m_isResizing;
+    bool m_frontendGeometryReady;
     QPointF m_cursorPosition;
     QPointF m_reportedCursorPosition;
     QRect m_frontendWindowRect;
