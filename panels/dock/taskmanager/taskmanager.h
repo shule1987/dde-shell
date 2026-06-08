@@ -20,6 +20,7 @@
 #include <QPointer>
 #include <QProcess>
 #include <QSet>
+#include <QString>
 #include <QVariantMap>
 
 namespace dock {
@@ -176,6 +177,14 @@ private:
     mutable QElapsedTimer m_trashCountRefreshTimer;
     mutable QSet<QString> m_managedTempFiles;
     mutable qint64 m_lastManagedTempPruneMs = 0;
+    struct PopupDescriptorCacheEntry
+    {
+        QString directoryPath;
+        qint64 directoryModifiedMs = 0;
+        qint64 createdMs = 0;
+        QVariantMap descriptor;
+    };
+    mutable QHash<QString, PopupDescriptorCacheEntry> m_popupDescriptorCache;
 };
 
 }

@@ -1,3 +1,15 @@
+dde-shell (2.2.4) unstable; urgency=medium
+
+  * fix: improve dock folder popup responsiveness.
+
+ -- shule1987 <shule1987@qq.com>  Mon, 08 Jun 2026 14:16:55 +0800
+
+dde-shell (2.2.3) unstable; urgency=medium
+
+  * feat: refine dock taskbar drag and popup interactions.
+
+ -- shule1987 <shule1987@qq.com>  Mon, 08 Jun 2026 11:01:37 +0800
+
 dde-shell (2.2.2) unstable; urgency=medium
 
   * fix: keep dock above fullscreen launcher without repeated raise.

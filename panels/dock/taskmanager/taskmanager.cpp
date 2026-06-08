@@ -65,6 +65,11 @@ Q_LOGGING_CATEGORY(taskManagerLog, "org.deepin.dde.shell.dock.taskmanager", QtDe
 
 namespace dock {
 
+namespace {
+constexpr qint64 PopupDescriptorCacheMaxAgeMs = 3000;
+constexpr int PopupDescriptorCacheMaxEntries = 32;
+}
+
 static QStringList mergedDockedElementsOrder(const QStringList &currentDockedElements, const QStringList &orderedDockElements)
 {
     QStringList mergedDockedElements;
@@ -686,6 +691,19 @@ static QString fileTypeSortText(const QFileInfo &fileInfo)
     return QStringLiteral("application/octet-stream");
 }
 
+static QString popupFolderDescriptorCacheKey(const QString &dockElement,
+                                             const QString &location,
+                                             const PopupSortState &sortState)
+{
+    return dockElement
+           + QLatin1Char('\n')
+           + location
+           + QLatin1Char('\n')
+           + popupSortFieldToString(sortState.field)
+           + QLatin1Char('\n')
+           + QString::number(static_cast<int>(sortState.order));
+}
+
 static QVariantList directoryEntriesForPath(const QString &path, const PopupSortState &sortState)
 {
     QList<PopupSortableEntry> entries;
@@ -693,6 +711,7 @@ static QVariantList directoryEntriesForPath(const QString &path, const PopupSort
     QDir directory(path);
     const QFileInfoList fileInfos = directory.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot,
                                                             QDir::NoSort);
+    entries.reserve(fileInfos.size());
     for (const QFileInfo &fileInfo : fileInfos) {
         const QString entryPath = fileInfo.absoluteFilePath();
         const FilePresentationInfo presentation = filePresentationInfo(fileInfo);
@@ -708,17 +727,33 @@ static QVariantList directoryEntriesForPath(const QString &path, const PopupSort
                                      QUrl::fromLocalFile(entryPath).toString(),
                                      thumbnailUrlForFile(fileInfo));
         entry.name = presentation.displayName;
-        entry.typeText = fileTypeSortText(fileInfo);
-        entry.modifiedTime = fileModifiedTimeForSort(fileInfo);
-        entry.createdTime = fileCreatedTimeForSort(fileInfo);
-        entry.size = fileSizeForSort(fileInfo);
         entry.directory = fileInfo.isDir();
+
+        switch (sortState.field) {
+        case PopupSortField::ModifiedTime:
+            entry.modifiedTime = fileModifiedTimeForSort(fileInfo);
+            break;
+        case PopupSortField::CreatedTime:
+            entry.createdTime = fileCreatedTimeForSort(fileInfo);
+            break;
+        case PopupSortField::Size:
+            entry.size = fileSizeForSort(fileInfo);
+            break;
+        case PopupSortField::Type:
+            entry.typeText = fileTypeSortText(fileInfo);
+            break;
+        case PopupSortField::Name:
+        default:
+            break;
+        }
+
         entries.append(entry);
     }
 
     sortPopupEntries(&entries, sortState, true);
 
     QVariantList result;
+    result.reserve(entries.size());
     for (const PopupSortableEntry &entry : std::as_const(entries)) {
         result.append(entry.entryData);
     }
@@ -1074,7 +1109,16 @@ TaskManager::TaskManager(QObject *parent)
     if (auto *thumbnailProvider = Dtk::Gui::DThumbnailProvider::instance()) {
         const auto notifyThumbnailChanged = [this](const QString &sourceFilePath, const QString &) {
             if (!sourceFilePath.isEmpty()) {
-                Q_EMIT popupEntryThumbnailChanged(QDir::cleanPath(sourceFilePath));
+                const QString cleanSourcePath = QDir::cleanPath(sourceFilePath);
+                const QString parentPath = QFileInfo(cleanSourcePath).absoluteDir().absolutePath();
+                for (auto it = m_popupDescriptorCache.begin(); it != m_popupDescriptorCache.end();) {
+                    if (it->directoryPath == parentPath) {
+                        it = m_popupDescriptorCache.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+                Q_EMIT popupEntryThumbnailChanged(cleanSourcePath);
             }
         };
         connect(thumbnailProvider, &Dtk::Gui::DThumbnailProvider::thumbnailChanged, this, notifyThumbnailChanged);
@@ -1697,8 +1741,12 @@ QVariantMap TaskManager::popupDescriptor(const QString &dockElement, const QStri
     }
 
     if (type == QStringLiteral("group")) {
+        const bool hasCustomSort = m_popupSortStates.contains(dockElement);
+        const PopupSortState state = hasCustomSort ? m_popupSortStates.value(dockElement) : PopupSortState{};
+        const QStringList appIds = invokeLauncherGroupItems(m_launcherGroupModel, id);
         QList<PopupSortableEntry> entries;
-        for (const QString &appId : invokeLauncherGroupItems(m_launcherGroupModel, id)) {
+        entries.reserve(appIds.size());
+        for (const QString &appId : appIds) {
             const QModelIndex appIndex = findIndexByNamedRole(m_launcherAppModel, MODEL_DESKTOPID, appId, DesktopIdRole);
             const QString iconName = appIndex.data(IconNameRole).toString().isEmpty() ?
                                          QString::fromLatin1(DEFAULT_APP_ICONNAME) :
@@ -1709,20 +1757,34 @@ QVariantMap TaskManager::popupDescriptor(const QString &dockElement, const QStri
             PopupSortableEntry entry;
             entry.entryData = popupEntry(appId, appName, iconName, false);
             entry.name = appName;
-            entry.typeText = launcherEntryTypeText(appIndex);
-            entry.modifiedTime = launcherModifiedTimeForSort(appIndex);
-            entry.createdTime = launcherInstalledTimeForSort(appIndex);
-            entry.size = launcherSizeForSort(appIndex);
+            if (hasCustomSort) {
+                switch (state.field) {
+                case PopupSortField::ModifiedTime:
+                    entry.modifiedTime = launcherModifiedTimeForSort(appIndex);
+                    break;
+                case PopupSortField::CreatedTime:
+                    entry.createdTime = launcherInstalledTimeForSort(appIndex);
+                    break;
+                case PopupSortField::Size:
+                    entry.size = launcherSizeForSort(appIndex);
+                    break;
+                case PopupSortField::Type:
+                    entry.typeText = launcherEntryTypeText(appIndex);
+                    break;
+                case PopupSortField::Name:
+                default:
+                    break;
+                }
+            }
             entries.append(entry);
         }
 
-        const bool hasCustomSort = m_popupSortStates.contains(dockElement);
-        const PopupSortState state = hasCustomSort ? m_popupSortStates.value(dockElement) : PopupSortState{};
         if (hasCustomSort) {
             sortPopupEntries(&entries, state, false);
         }
 
         QVariantList entryData;
+        entryData.reserve(entries.size() + 1);
         for (const PopupSortableEntry &entry : std::as_const(entries)) {
             entryData.append(entry.entryData);
         }
@@ -1760,10 +1822,22 @@ QVariantMap TaskManager::popupDescriptor(const QString &dockElement, const QStri
         }
 
         const PopupSortState state = m_popupSortStates.value(dockElement, PopupSortState{});
+        const QFileInfo currentLocationInfo(currentLocation);
+        const qint64 directoryModifiedMs = currentLocationInfo.lastModified().toMSecsSinceEpoch();
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        const QString cacheKey = popupFolderDescriptorCacheKey(dockElement, currentLocation, state);
+        const auto cacheIt = m_popupDescriptorCache.constFind(cacheKey);
+        if (cacheIt != m_popupDescriptorCache.constEnd()
+            && cacheIt->directoryPath == currentLocation
+            && cacheIt->directoryModifiedMs == directoryModifiedMs
+            && nowMs - cacheIt->createdMs <= PopupDescriptorCacheMaxAgeMs) {
+            return cacheIt->descriptor;
+        }
+
         QVariantList entries = directoryEntriesForPath(currentLocation, state);
         entries.append(openInFileManagerPopupEntry(currentLocation));
 
-        return {
+        QVariantMap descriptor = {
             {QStringLiteral("kind"), type},
             {QStringLiteral("title"), displayNameForPath(currentLocation)},
             {QStringLiteral("location"), currentLocation},
@@ -1773,6 +1847,11 @@ QVariantMap TaskManager::popupDescriptor(const QString &dockElement, const QStri
             {QStringLiteral("sortField"), popupSortFieldToString(state.field)},
             {QStringLiteral("sortDescending"), state.order == Qt::DescendingOrder},
         };
+        if (m_popupDescriptorCache.size() >= PopupDescriptorCacheMaxEntries) {
+            m_popupDescriptorCache.clear();
+        }
+        m_popupDescriptorCache.insert(cacheKey, {currentLocation, directoryModifiedMs, nowMs, descriptor});
+        return descriptor;
     }
 
     return {};
