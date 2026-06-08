@@ -5,6 +5,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick 2.15
+import QtQuick.Window 2.15
 import QtQuick.Controls 2.15
 import Qt.labs.platform 1.1 as LP
 
@@ -37,13 +38,14 @@ Item {
                                           : root.name
 
     signal dropFilesOnItem(itemId: string, files: list<string>)
-    signal dragFinished()
+    signal dragFinished(real globalX, real globalY)
 
     Drag.active: mouseArea.drag.active
     Drag.source: root
     Drag.hotSpot.x: icon.width / 2
     Drag.hotSpot.y: icon.height / 2
     Drag.dragType: Drag.Automatic
+    Drag.supportedActions: Qt.MoveAction
     Drag.mimeData: {
         "text/x-dde-dock-dnd-appid": itemId,
         "text/x-dde-dock-dnd-element": dockElement,
@@ -60,6 +62,15 @@ Item {
     property int popupIconSize: Math.max(1, Math.round(iconSize * 0.92))
     property bool enableTitle: false
     property bool titleActive: enableTitle && titleLoader.active
+    property bool returnAnimationRunning: false
+    property real returnAnimationTargetX: 0
+    property real returnAnimationTargetY: 0
+    property real returnAnimationDuration: 180
+    property bool removeAnimationRunning: false
+    property real removeAnimationDuration: 420
+    readonly property int removeAnimationFadeDuration: Math.round(removeAnimationDuration * 0.72)
+    property real removeAnimationRotation: 720
+    property string pendingAnimatedMenuAction: ""
     property int appTitleSpacing: 0
     property bool popupItem: root.itemKind === "group" || root.itemKind === "folder"
     readonly property bool unopenedAppItem: !root.popupItem && root.windows.length === 0
@@ -186,6 +197,114 @@ Item {
         Panel.reportMousePresence(false, lastSpotlightPoint)
     }
 
+    function currentPointerGlobalPoint() {
+        if (taskmanager && taskmanager.Applet && typeof taskmanager.Applet.cursorGlobalPosition === "function") {
+            const cursorPoint = taskmanager.Applet.cursorGlobalPosition()
+            if (cursorPoint && Number.isFinite(cursorPoint.x) && Number.isFinite(cursorPoint.y)) {
+                return cursorPoint
+            }
+        }
+
+        const point = mouseArea.mapToGlobal(mouseArea.mouseX, mouseArea.mouseY)
+        if (Number.isFinite(point.x) && Number.isFinite(point.y)) {
+            return point
+        }
+
+        return root.mapToGlobal(root.width / 2, root.height / 2)
+    }
+
+    function startDockReturnAnimation(globalX, globalY) {
+        if (root.Drag.imageSource == "") {
+            return false
+        }
+
+        const targetPoint = appItem.mapToGlobal(0, 0)
+        const targetWidth = Math.max(1, appItem.width)
+        const targetHeight = Math.max(1, appItem.height)
+        const startX = Number.isFinite(globalX) ? globalX - targetWidth / 2 : targetPoint.x
+        const startY = Number.isFinite(globalY) ? globalY - targetHeight / 2 : targetPoint.y
+        const dx = targetPoint.x - startX
+        const dy = targetPoint.y - startY
+        const distance = Math.sqrt(dx * dx + dy * dy)
+
+        dockReturnAnimation.stop()
+        dockReturnWindow.width = targetWidth
+        dockReturnWindow.height = targetHeight
+        dockReturnWindow.x = startX
+        dockReturnWindow.y = startY
+        dockReturnWindow.opacity = 0.96
+        returnAnimationTargetX = targetPoint.x
+        returnAnimationTargetY = targetPoint.y
+        returnAnimationDuration = Math.max(140, Math.min(260, Math.round(distance * 0.28)))
+        returnAnimationRunning = true
+        dockReturnAnimation.restart()
+        return true
+    }
+
+    function startDockRemoveAnimation(globalX, globalY) {
+        if (removeAnimationRunning || dockRemoveAnimation.running) {
+            return true
+        }
+
+        if (root.Drag.imageSource == "") {
+            return false
+        }
+
+        const targetWidth = Math.max(1, appItem.width)
+        const targetHeight = Math.max(1, appItem.height)
+        const startX = Number.isFinite(globalX) ? globalX - targetWidth / 2 : appItem.mapToGlobal(0, 0).x
+        const startY = Number.isFinite(globalY) ? globalY - targetHeight / 2 : appItem.mapToGlobal(0, 0).y
+
+        dockRemoveAnimation.stop()
+        dockRemoveWindow.width = targetWidth
+        dockRemoveWindow.height = targetHeight
+        dockRemoveWindow.x = startX
+        dockRemoveWindow.y = startY
+        dockRemoveIcon.rotation = 0
+        dockRemoveIcon.scale = 1.0
+        dockRemoveIcon.opacity = 1.0
+        removeAnimationRunning = true
+        dockRemoveAnimation.restart()
+        return true
+    }
+
+    function menuActionRemovesDock(menuId, menuText) {
+        if (menuId !== "dock-action-dock") {
+            return false
+        }
+
+        const sourceText = String(menuText || "")
+        const localizedText = contextMenuLoader.item
+            ? String(contextMenuLoader.item.localizedMenuText(sourceText))
+            : sourceText
+        return sourceText === "Undock"
+            || sourceText === "移除驻留"
+            || localizedText === "移除驻留"
+    }
+
+    function triggerMenuAction(menuId) {
+        TaskManager.requestNewInstance(root.modelIndex, menuId)
+    }
+
+    function triggerMenuActionAfterAnimationStart(menuId) {
+        root.pendingAnimatedMenuAction = menuId
+        animatedMenuActionTimer.restart()
+    }
+
+    function triggerAnimatedMenuUndock(menuId) {
+        const centerPoint = appItem.mapToGlobal(appItem.width / 2, appItem.height / 2)
+        const runAction = function() {
+            root.triggerMenuActionAfterAnimationStart(menuId)
+        }
+
+        root.Drag.imageSource = ""
+        appItem.grabToImage(function(result) {
+            root.Drag.imageSource = result.url
+            root.startDockRemoveAnimation(centerPoint.x, centerPoint.y)
+            runAction()
+        })
+    }
+
     function scheduleWindowIconGeometryUpdate() {
         deferredWindowIconGeometryUpdate = true
         if (resizeOptimizationActive) {
@@ -270,7 +389,7 @@ Item {
         anchors.fill: parent
         id: appItem
         implicitWidth: root.titleActive ? (iconContainer.width + 4 + titleLoader.width + root.appTitleSpacing) : iconContainer.width + root.appTitleSpacing
-        visible: !root.Drag.active // When in dragging, hide app item
+        visible: !root.Drag.active && !root.returnAnimationRunning && !root.removeAnimationRunning
         background: AppletItemBackground {
             id: hoverBackground
 
@@ -641,6 +760,114 @@ Item {
         }
     }
 
+    Window {
+        id: dockReturnWindow
+        visible: root.returnAnimationRunning
+        flags: Qt.FramelessWindowHint | Qt.ToolTip | Qt.WindowStaysOnTopHint
+        color: "transparent"
+
+        Image {
+            anchors.fill: parent
+            source: root.Drag.imageSource
+            fillMode: Image.PreserveAspectFit
+            smooth: true
+            mipmap: true
+            cache: false
+        }
+    }
+
+    ParallelAnimation {
+        id: dockReturnAnimation
+        onStopped: {
+            root.returnAnimationRunning = false
+            root.Drag.imageSource = ""
+        }
+
+        NumberAnimation {
+            target: dockReturnWindow
+            property: "x"
+            to: root.returnAnimationTargetX
+            duration: root.returnAnimationDuration
+            easing.type: Easing.OutCubic
+        }
+
+        NumberAnimation {
+            target: dockReturnWindow
+            property: "y"
+            to: root.returnAnimationTargetY
+            duration: root.returnAnimationDuration
+            easing.type: Easing.OutCubic
+        }
+
+        NumberAnimation {
+            target: dockReturnWindow
+            property: "opacity"
+            to: 1.0
+            duration: root.returnAnimationDuration
+            easing.type: Easing.OutQuad
+        }
+    }
+
+    Window {
+        id: dockRemoveWindow
+        visible: root.removeAnimationRunning
+        flags: Qt.FramelessWindowHint | Qt.ToolTip | Qt.WindowStaysOnTopHint
+        color: "transparent"
+
+        Image {
+            id: dockRemoveIcon
+            anchors.fill: parent
+            source: root.Drag.imageSource
+            fillMode: Image.PreserveAspectFit
+            smooth: true
+            mipmap: true
+            cache: false
+            transformOrigin: Item.Center
+        }
+    }
+
+    ParallelAnimation {
+        id: dockRemoveAnimation
+        onStopped: {
+            root.removeAnimationRunning = false
+            root.Drag.imageSource = ""
+        }
+
+        NumberAnimation {
+            target: dockRemoveIcon
+            property: "rotation"
+            from: 0
+            to: root.removeAnimationRotation
+            duration: root.removeAnimationDuration
+            easing.type: Easing.Linear
+        }
+
+        NumberAnimation {
+            target: dockRemoveIcon
+            property: "scale"
+            from: 1.0
+            to: 0.0
+            duration: root.removeAnimationDuration
+            easing.type: Easing.Linear
+        }
+
+        NumberAnimation {
+            target: dockRemoveIcon
+            property: "opacity"
+            from: 1.0
+            to: 0.0
+            duration: root.removeAnimationFadeDuration
+            easing.type: Easing.Linear
+        }
+    }
+
+    Item {
+        id: dragProxy
+        visible: false
+        width: 1
+        height: 1
+    }
+
     Timer {
         id: appItemSpotlightClearTimer
         interval: 70
@@ -648,6 +875,19 @@ Item {
         onTriggered: {
             if (!hoverHandler.hovered) {
                 root.clearSpotlight()
+            }
+        }
+    }
+
+    Timer {
+        id: animatedMenuActionTimer
+        interval: 16
+        repeat: false
+        onTriggered: {
+            const menuId = root.pendingAnimatedMenuAction
+            root.pendingAnimatedMenuAction = ""
+            if (menuId !== "") {
+                root.triggerMenuAction(menuId)
             }
         }
     }
@@ -749,7 +989,11 @@ Item {
                             ? !contextMenuLoader.trashEmpty
                             : true
                     onTriggered: {
-                        TaskManager.requestNewInstance(root.modelIndex, menuId);
+                        if (root.menuActionRemovesDock(menuId, menuText)) {
+                            root.triggerAnimatedMenuUndock(menuId)
+                        } else {
+                            root.triggerMenuAction(menuId)
+                        }
                     }
                 }
                 onObjectAdded: (index, object) => contextMenu.insertItem(index, object)
@@ -1051,14 +1295,18 @@ Item {
         anchors.fill: parent
         hoverEnabled: false
         acceptedButtons: Qt.LeftButton
-        drag.target: root
+        drag.target: dragProxy
         drag.onActiveChanged: {
             if (!drag.active) {
-                Panel.contextDragging = false
-                root.dragFinished()
+                const releasePoint = root.currentPointerGlobalPoint()
+                dragProxy.x = 0
+                dragProxy.y = 0
+                root.dragFinished(releasePoint.x, releasePoint.y)
                 return
             }
-            Panel.contextDragging = true
+            taskmanager.activeTaskbarDragDockElement = root.dockElement
+            taskmanager.activeTaskbarDragItemId = root.itemId
+            taskmanager.activeTaskbarDragWinId = root.windows.length > 0 ? root.windows[0] : ""
         }
 
         onPressed: function (mouse) {

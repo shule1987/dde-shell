@@ -76,6 +76,9 @@ ContainmentItem {
     property int appContainerTargetWidth: useColumnLayout ? Panel.rootObject.dockSize : appContainer.targetImplicitWidth
     property int appContainerTargetHeight: useColumnLayout ? appContainer.targetImplicitHeight : Panel.rootObject.dockSize
     property bool adaptiveFashionDockDragCommitted: false
+    property string activeTaskbarDragDockElement: ""
+    property string activeTaskbarDragItemId: ""
+    property string activeTaskbarDragWinId: ""
     
     implicitWidth: useColumnLayout
         ? Panel.rootObject.dockSize
@@ -656,6 +659,9 @@ ContainmentItem {
                     if (dropPlaceholder) {
                         return false
                     }
+                    if (launcherDndDropArea.launcherDndDragSource === "taskbar") {
+                        return false
+                    }
 
                     let draggedAppId = taskmanager.Applet.desktopIdToAppId(launcherDndDropArea.launcherDndDesktopId)
                     if (itemId !== draggedAppId) {
@@ -782,12 +788,17 @@ ContainmentItem {
                         title: delegateRoot.title
                         enableTitle: textCalculator.enabled
                         appTitleSpacing: taskmanager.appTitleSpacing
-                        ListView.delayRemove: Drag.active
+                        ListView.delayRemove: Drag.active || removeAnimationRunning
                         Component.onCompleted: {
                             dropFilesOnItem.connect(taskmanager.Applet.dropFilesOnItem)
                         }
-                        onDragFinished: function() {
-                            launcherDndDropArea.resetDndState()
+                        onDragFinished: function(globalX, globalY) {
+                            launcherDndDropArea.handleTaskbarDragFinished(appItem.dockElement,
+                                                                          appItem.itemId,
+                                                                          appItem.windows.length > 0 ? appItem.windows[0] : "",
+                                                                          globalX,
+                                                                          globalY,
+                                                                          appItem)
                         }
                     }
                 }
@@ -819,6 +830,7 @@ ContainmentItem {
             property string pendingFolderUrl: ""
             property var activeDragSource: null
             property bool ownsContextDragging: false
+            property bool taskbarDragUndocked: false
 
             function resetDndState(clearPlaceholder) {
                 const shouldClearPlaceholder = clearPlaceholder === undefined || clearPlaceholder
@@ -833,6 +845,10 @@ ContainmentItem {
                 launcherDndWinId = ""
                 pendingDockElement = ""
                 pendingFolderUrl = ""
+                taskbarDragUndocked = false
+                taskmanager.activeTaskbarDragDockElement = ""
+                taskmanager.activeTaskbarDragItemId = ""
+                taskmanager.activeTaskbarDragWinId = ""
             }
 
             function beginContextDragging() {
@@ -888,8 +904,31 @@ ContainmentItem {
                 activeDragSource = null
             }
 
-            function handleSourceDragEnded() {
+            function handleSourceDragEnded(globalX, globalY) {
+                if (finishTaskbarDragOutside(globalX, globalY)) {
+                    return
+                }
+
                 resetDndState()
+            }
+
+            function handleTaskbarDragFinished(sourceDockElement, sourceItemId, sourceWinId, globalX, globalY, sourceItem) {
+                if (taskmanager.activeTaskbarDragDockElement === "" && pendingDockElement === "") {
+                    return
+                }
+                if (sourceDockElement === "") {
+                    resetDndState()
+                    return
+                }
+
+                launcherDndDragSource = "taskbar"
+                pendingDockElement = sourceDockElement
+                launcherDndDesktopId = sourceItemId
+                launcherDndWinId = sourceWinId
+                if (sourceItem) {
+                    activeDragSource = sourceItem
+                }
+                finishTaskbarDragOutside(globalX, globalY)
             }
 
             function dragString(drag, key) {
@@ -902,6 +941,41 @@ ContainmentItem {
                     return ""
                 }
                 return String(value)
+            }
+
+            function sourceString(drag, propertyName) {
+                if (!drag || !drag.source || drag.source[propertyName] === undefined || drag.source[propertyName] === null) {
+                    return ""
+                }
+
+                const value = drag.source[propertyName]
+                return value === "" ? "" : String(value)
+            }
+
+            function taskbarDockElementFromDrag(drag) {
+                let dockElement = dragString(drag, "text/x-dde-dock-dnd-element")
+                if (dockElement !== "") {
+                    return dockElement
+                }
+
+                return sourceString(drag, "dockElement")
+            }
+
+            function acceptTaskbarDrag(drag) {
+                if (!drag) {
+                    return
+                }
+
+                if (typeof drag.accept === "function") {
+                    try {
+                        drag.accept(Qt.MoveAction)
+                        return
+                    } catch (error) {
+                        // Older Qt DragEvent variants only expose the accepted property.
+                    }
+                }
+
+                drag.accepted = true
             }
 
             function urlsFromText(rawText) {
@@ -997,6 +1071,61 @@ ContainmentItem {
                 return taskmanager.findDockElementIndex(pendingDockElement)
             }
 
+            function undockTaskbarDragIfNeeded() {
+                if (taskbarDragUndocked
+                        || launcherDndDragSource !== "taskbar"
+                        || pendingDockElement === "") {
+                    return false
+                }
+
+                taskbarDragUndocked = taskmanager.Applet.requestUndockByDockElement(pendingDockElement)
+                return taskbarDragUndocked
+            }
+
+            function dockReleaseDistance(globalX, globalY) {
+                const dockRoot = Panel.rootObject
+                if (!dockRoot || !Number.isFinite(globalX) || !Number.isFinite(globalY)) {
+                    return Number.POSITIVE_INFINITY
+                }
+
+                const localX = globalX - dockRoot.x
+                const localY = globalY - dockRoot.y
+                const dx = localX < 0
+                    ? -localX
+                    : (localX > dockRoot.width ? localX - dockRoot.width : 0)
+                const dy = localY < 0
+                    ? -localY
+                    : (localY > dockRoot.height ? localY - dockRoot.height : 0)
+                return Math.sqrt(dx * dx + dy * dy)
+            }
+
+            function dockReleaseCancelThreshold() {
+                return Math.max(1, Panel.rootObject ? Panel.rootObject.dockSize : taskmanager.implicitHeight) * 3
+            }
+
+            function finishTaskbarDragOutside(globalX, globalY) {
+                if (launcherDndDragSource !== "taskbar" || pendingDockElement === "") {
+                    return false
+                }
+
+                const distance = dockReleaseDistance(globalX, globalY)
+                const threshold = dockReleaseCancelThreshold()
+                if (distance <= threshold) {
+                    if (distance > 0 && activeDragSource && typeof activeDragSource.startDockReturnAnimation === "function") {
+                        activeDragSource.startDockReturnAnimation(globalX, globalY)
+                    }
+                    resetDndState()
+                    return true
+                }
+
+                if (activeDragSource && typeof activeDragSource.startDockRemoveAnimation === "function") {
+                    activeDragSource.startDockRemoveAnimation(globalX, globalY)
+                }
+                undockTaskbarDragIfNeeded()
+                resetDndState()
+                return true
+            }
+
             function logDrag(prefix, drag, extra) {
                 if (!Panel.geometryDebugLog) {
                     return
@@ -1021,10 +1150,19 @@ ContainmentItem {
                 launcherDndDragSource = dragString(drag, "text/x-dde-dock-dnd-source")
                 launcherDndWinId = dragString(drag, "text/x-dde-dock-dnd-winid")
                 launcherDndDesktopId = launcherDesktopIdFromDrag(drag)
-                pendingDockElement = dragString(drag, "text/x-dde-dock-dnd-element")
+                pendingDockElement = taskbarDockElementFromDrag(drag)
                 pendingFolderUrl = ""
                 bindActiveDragSource(drag)
 
+                if (taskmanager.activeTaskbarDragDockElement !== "") {
+                    launcherDndDragSource = "taskbar"
+                    pendingDockElement = taskmanager.activeTaskbarDragDockElement
+                    launcherDndDesktopId = taskmanager.activeTaskbarDragItemId
+                    launcherDndWinId = taskmanager.activeTaskbarDragWinId
+                }
+                if (launcherDndDragSource === "" && pendingDockElement !== "") {
+                    launcherDndDragSource = "taskbar"
+                }
                 if (launcherDndDragSource === "" && launcherDndDesktopId !== "") {
                     launcherDndDragSource = "launcher"
                 }
@@ -1039,7 +1177,7 @@ ContainmentItem {
                         drag.accepted = false
                         resetDndState()
                     } else {
-                        drag.accepted = true
+                        acceptTaskbarDrag(drag)
                     }
                     return
                 }
@@ -1080,7 +1218,9 @@ ContainmentItem {
             onPositionChanged: function(drag) {
                 if (pendingDockElement === "") return
                 if (!dragPointInside(drag)) {
-                    resetDndState()
+                    if (launcherDndDragSource !== "taskbar") {
+                        resetDndState()
+                    }
                     return
                 }
 
@@ -1124,7 +1264,11 @@ ContainmentItem {
                     taskmanager.adaptiveFashionDockDragCommitted = true
                 }
 
-                drop.accepted = true
+                if (externalDockDrop) {
+                    drop.accepted = true
+                } else {
+                    acceptTaskbarDrag(drop)
+                }
                 let targetIndex = appContainer.indexAt(drop.x, drop.y)
                 let currentIndex = currentDragIndex()
                 if (currentIndex !== -1 && targetIndex !== -1 && currentIndex !== targetIndex) {
@@ -1148,12 +1292,16 @@ ContainmentItem {
 
             onExited: function(drag) {
                 logDrag("taskmanager drag exited", drag)
-                resetDndState()
+                if (launcherDndDragSource !== "taskbar") {
+                    resetDndState()
+                }
             }
 
             onContainsDragChanged: {
                 if (!containsDrag && pendingDockElement !== "") {
-                    resetDndState()
+                    if (launcherDndDragSource !== "taskbar") {
+                        resetDndState()
+                    }
                 }
             }
         }

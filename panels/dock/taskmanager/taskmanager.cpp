@@ -24,6 +24,7 @@
 #include "treelandwindowmonitor.h"
 
 #include <QDesktopServices>
+#include <QCursor>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
@@ -1557,6 +1558,35 @@ bool TaskManager::requestUndockByFolderUrl(const QString &folderUrl)
     Settings->removeDockedElement(dockElement);
     qCWarning(taskManagerLog) << "accepted folder undock request" << folderUrl << dockElement;
     return true;
+}
+
+bool TaskManager::requestUndockByDockElement(const QString &dockElement)
+{
+    const auto [type, id] = splitDockElement(dockElement);
+    if (type.isEmpty() || id.isEmpty()) {
+        qCWarning(taskManagerLog) << "reject dock element undock request due to invalid element" << dockElement;
+        return false;
+    }
+
+    if (type == QStringLiteral("desktop")) {
+        const bool ok = RequestUndock(id);
+        qCWarning(taskManagerLog) << "desktop dock element undock request result" << dockElement << ok;
+        return ok;
+    }
+
+    if (type == QStringLiteral("group") || type == QStringLiteral("folder")) {
+        Settings->removeDockedElement(dockElement);
+        qCWarning(taskManagerLog) << "accepted dock element undock request" << dockElement;
+        return true;
+    }
+
+    qCWarning(taskManagerLog) << "reject dock element undock request due to unsupported type" << dockElement << type;
+    return false;
+}
+
+QPoint TaskManager::cursorGlobalPosition() const
+{
+    return QCursor::pos();
 }
 
 QVariantMap TaskManager::popupSortState(const QString &dockElement) const

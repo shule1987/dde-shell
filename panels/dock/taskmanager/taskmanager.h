@@ -16,6 +16,7 @@
 #include <QAbstractItemModel>
 #include <QElapsedTimer>
 #include <QHash>
+#include <QPoint>
 #include <QPointer>
 #include <QProcess>
 #include <QSet>
@@ -118,6 +119,8 @@ public:
     Q_INVOKABLE bool requestUndockByDesktopId(const QString& desktopID);
     Q_INVOKABLE bool requestDockByFolderUrl(const QString &folderUrl);
     Q_INVOKABLE bool requestUndockByFolderUrl(const QString &folderUrl);
+    Q_INVOKABLE bool requestUndockByDockElement(const QString &dockElement);
+    Q_INVOKABLE QPoint cursorGlobalPosition() const;
     Q_INVOKABLE QVariantMap popupDescriptor(const QString &dockElement, const QString &location = QString()) const;
     Q_INVOKABLE QVariantMap popupSortState(const QString &dockElement) const;
     Q_INVOKABLE QVariantMap cyclePopupSort(const QString &dockElement, const QString &fieldName);
