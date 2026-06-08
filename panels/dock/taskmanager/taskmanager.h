@@ -125,6 +125,7 @@ public:
     Q_INVOKABLE QVariantMap popupSortState(const QString &dockElement) const;
     Q_INVOKABLE QVariantMap cyclePopupSort(const QString &dockElement, const QString &fieldName);
     Q_INVOKABLE void activatePopupEntry(const QString &dockElement, const QString &entryId) const;
+    Q_INVOKABLE void openPopupLocation(const QString &dockElement, const QString &location = QString()) const;
     Q_INVOKABLE bool RequestDock(QString appID);
     Q_INVOKABLE bool IsDocked(QString appID);
     Q_INVOKABLE bool RequestUndock(QString appID);

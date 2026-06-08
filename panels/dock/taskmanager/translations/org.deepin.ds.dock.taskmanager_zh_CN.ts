@@ -1,4 +1,6 @@
-<?xml version="1.0" ?><!DOCTYPE TS><TS version="2.1" language="zh_CN">
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE TS>
+<TS version="2.1" language="zh_CN">
 <context>
     <name>AppItem</name>
     <message>
@@ -37,25 +39,12 @@
         <source>Ascending</source>
         <translation>升序</translation>
     </message>
+</context>
+<context>
+    <name>DockPinnedPopup</name>
     <message>
-        <source>Sort by Name</source>
-        <translation>按名称排序</translation>
-    </message>
-    <message>
-        <source>Sort by Modified Time</source>
-        <translation>按修改时间排序</translation>
-    </message>
-    <message>
-        <source>Sort by Created Time</source>
-        <translation>按创建时间排序</translation>
-    </message>
-    <message>
-        <source>Sort by Size</source>
-        <translation>按大小排序</translation>
-    </message>
-    <message>
-        <source>Sort by Type</source>
-        <translation>按类型排序</translation>
+        <source>No items</source>
+        <translation>无项目</translation>
     </message>
 </context>
 <context>
@@ -113,17 +102,14 @@
     </message>
 </context>
 <context>
-    <name>DockPinnedPopup</name>
-    <message>
-        <source>No items</source>
-        <translation>无项目</translation>
-    </message>
-</context>
-<context>
     <name>dock::TaskManager</name>
     <message>
         <source>%1 files</source>
         <translation>%1个文件</translation>
+    </message>
+    <message>
+        <source>Open in File Manager</source>
+        <translation>在文件管理器里打开</translation>
     </message>
     <message>
         <source>Internet</source>

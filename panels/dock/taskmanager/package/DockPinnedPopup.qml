@@ -50,10 +50,8 @@ FocusScope {
     readonly property int itemHoverPadding: 10
     readonly property int itemHoverBottomMargin: 2
     readonly property int itemTextBottomMargin: 6
-    readonly property int scrollBarWidth: 0
-    readonly property int scrollBarGap: 0
-    readonly property int scrollBarLaneWidth: scrollBarWidth
     readonly property int thumbnailCornerRadius: 3
+    readonly property string openInFileManagerAction: "dock-action-openInFileManager"
     readonly property color selectionFillColor: Qt.rgba(1, 1, 1, 0.21)
     readonly property color selectionInsideBorderColor: Qt.rgba(1, 1, 1, 0.15)
     readonly property color selectionOutsideBorderColor: Qt.rgba(0, 0, 0, 0.14)
@@ -83,7 +81,7 @@ FocusScope {
     readonly property string middleEllipsis: "\u2026"
     readonly property bool popupOwnerActive: !!(root.parent && root.parent.visible)
 
-    width: sidePadding * 2 + gridAreaWidth + scrollBarLaneWidth
+    width: sidePadding * 2 + gridAreaWidth
     height: popupHeightValue
     focus: true
 
@@ -276,6 +274,22 @@ FocusScope {
 
     function currentLocation() {
         return descriptor && descriptor.location ? String(descriptor.location) : ""
+    }
+
+    function isOpenInFileManagerEntry(entry) {
+        return entry && entry.action !== undefined && String(entry.action) === openInFileManagerAction
+    }
+
+    function activateOpenInFileManagerEntry(entry) {
+        if (!isOpenInFileManagerEntry(entry)) {
+            return false
+        }
+
+        if (root.applet && root.applet.openPopupLocation) {
+            root.applet.openPopupLocation(root.dockElement, entry.entryId || "")
+        }
+        root.closeRequested()
+        return true
     }
 
     function clearTypeAhead() {
@@ -491,6 +505,10 @@ FocusScope {
 
         const currentEntry = entries[keyboardCurrentIndex]
         if (!currentEntry) {
+            return
+        }
+
+        if (activateOpenInFileManagerEntry(currentEntry)) {
             return
         }
 
@@ -724,7 +742,7 @@ FocusScope {
 
         Item {
             id: listViewport
-            width: root.gridAreaWidth + root.scrollBarLaneWidth
+            width: root.gridAreaWidth
             height: root.gridViewportHeight
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.top: headerRow.bottom
@@ -739,7 +757,7 @@ FocusScope {
                 id: contentLoader
                 anchors.left: parent.left
                 anchors.top: parent.top
-                width: root.gridAreaWidth
+                width: parent.width
                 height: parent.height
                 sourceComponent: root.entries.length === 0 ? emptyStateComponent : gridContentComponent
             }
@@ -893,6 +911,13 @@ FocusScope {
                         }
                     }
 
+                    ScrollBar.vertical: D.ScrollBar {
+                        visible: root.totalRows > root.visibleRows
+                        active: visible
+                        interactive: visible
+                        policy: visible ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+                    }
+
                     onContentHeightChanged: {
                         const clampedContentY = root.clampContentY(gridFlickable, contentY)
                         if (Math.abs(clampedContentY - contentY) > 0.5) {
@@ -1015,6 +1040,8 @@ FocusScope {
                                 id: gridButton
                                 required property int index
                                 required property var modelData
+                                readonly property string entryAction: modelData && modelData.action ? String(modelData.action) : ""
+                                readonly property bool openInFileManagerEntry: entryAction === root.openInFileManagerAction
                                 readonly property string entryUrl: modelData && modelData.entryUrl ? String(modelData.entryUrl) : ""
                                 readonly property string thumbnailUrl: modelData && modelData.thumbnailUrl ? String(modelData.thumbnailUrl) : ""
                                 readonly property bool thumbnailAvailable: thumbnailUrl !== ""
@@ -1063,10 +1090,10 @@ FocusScope {
                             Drag.dragType: Drag.Automatic
                             Drag.hotSpot.x: Qt.platform.pluginName === "xcb" ? 0 : sourceDragHotSpotX
                             Drag.hotSpot.y: Qt.platform.pluginName === "xcb" ? 0 : sourceDragHotSpotY
-                            Drag.supportedActions: Qt.CopyAction | Qt.MoveAction | Qt.LinkAction
-                            Drag.mimeData: ({
+                            Drag.supportedActions: gridButton.openInFileManagerEntry ? Qt.IgnoreAction : Qt.CopyAction | Qt.MoveAction | Qt.LinkAction
+                            Drag.mimeData: gridButton.entryUrl !== "" ? ({
                                 "text/uri-list": gridButton.entryUrl
-                            })
+                            }) : ({})
                             DQuickDrag.hotSpotScale: Qt.size(0.5, dragOverlayHotSpotScaleY)
                             DQuickDrag.active: Drag.active && Qt.platform.pluginName === "xcb"
                             DQuickDrag.overlay: dragOverlayWindow
@@ -1403,6 +1430,10 @@ FocusScope {
                                 }
 
                                 root.selectEntryIndex(index, false)
+                                if (root.activateOpenInFileManagerEntry(modelData)) {
+                                    return
+                                }
+
                                 if (modelData.directory) {
                                     root.refresh(modelData.entryId, true)
                                     return

@@ -599,7 +599,8 @@ static QVariantMap popupEntry(const QString &entryId,
                               const QString &iconName,
                               bool directory,
                               const QString &entryUrl = {},
-                              const QString &thumbnailUrl = {})
+                              const QString &thumbnailUrl = {},
+                              const QString &action = {})
 {
     return {
         {QStringLiteral("entryId"), entryId},
@@ -608,7 +609,36 @@ static QVariantMap popupEntry(const QString &entryId,
         {QStringLiteral("directory"), directory},
         {QStringLiteral("entryUrl"), entryUrl},
         {QStringLiteral("thumbnailUrl"), thumbnailUrl},
+        {QStringLiteral("action"), action},
     };
+}
+
+static QVariantMap openInFileManagerPopupEntry(const QString &location)
+{
+    return popupEntry(location,
+                      TaskManager::tr("Open in File Manager"),
+                      QStringLiteral("folder-open"),
+                      false,
+                      {},
+                      {},
+                      DOCK_ACTION_OPEN_IN_FILEMANAGER);
+}
+
+static QString firstExistingApplicationsLocation()
+{
+    const QString preferredLocation = QStringLiteral("/usr/share/applications");
+    if (QFileInfo(preferredLocation).isDir()) {
+        return preferredLocation;
+    }
+
+    const QStringList locations = QStandardPaths::standardLocations(QStandardPaths::ApplicationsLocation);
+    for (const QString &location : locations) {
+        if (QFileInfo(location).isDir()) {
+            return QDir::cleanPath(location);
+        }
+    }
+
+    return {};
 }
 
 static qint64 dateTimeToSortValue(const QDateTime &dateTime)
@@ -956,6 +986,33 @@ static QString launcherEntryTypeText(const QModelIndex &appIndex)
     }
 
     return QStringLiteral("application");
+}
+
+static QString launcherGroupOpenLocation(QAbstractItemModel *appModel, QAbstractItemModel *groupModel, const QString &groupId)
+{
+    QSet<QString> sourceDirectories;
+    for (const QString &appId : invokeLauncherGroupItems(groupModel, groupId)) {
+        const QModelIndex appIndex = findIndexByNamedRole(appModel, MODEL_DESKTOPID, appId, TaskManager::DesktopIdRole);
+        if (!appIndex.isValid()) {
+            continue;
+        }
+
+        const QFileInfo desktopFileInfo(appIndex.data(TaskManager::DesktopSourcePathRole).toString());
+        if (!desktopFileInfo.isFile()) {
+            continue;
+        }
+
+        const QString directoryPath = QDir::cleanPath(desktopFileInfo.absoluteDir().absolutePath());
+        if (!directoryPath.isEmpty()) {
+            sourceDirectories.insert(directoryPath);
+        }
+    }
+
+    if (sourceDirectories.size() == 1) {
+        return *sourceDirectories.constBegin();
+    }
+
+    return firstExistingApplicationsLocation();
 }
 
 static QString launcherGroupDisplayName(QAbstractItemModel *groupModel, const QString &groupId)
@@ -1669,6 +1726,10 @@ QVariantMap TaskManager::popupDescriptor(const QString &dockElement, const QStri
         for (const PopupSortableEntry &entry : std::as_const(entries)) {
             entryData.append(entry.entryData);
         }
+        const QString openLocation = launcherGroupOpenLocation(m_launcherAppModel, m_launcherGroupModel, id);
+        if (!openLocation.isEmpty()) {
+            entryData.append(openInFileManagerPopupEntry(openLocation));
+        }
 
         return {
             {QStringLiteral("kind"), type},
@@ -1699,6 +1760,8 @@ QVariantMap TaskManager::popupDescriptor(const QString &dockElement, const QStri
         }
 
         const PopupSortState state = m_popupSortStates.value(dockElement, PopupSortState{});
+        QVariantList entries = directoryEntriesForPath(currentLocation, state);
+        entries.append(openInFileManagerPopupEntry(currentLocation));
 
         return {
             {QStringLiteral("kind"), type},
@@ -1706,7 +1769,7 @@ QVariantMap TaskManager::popupDescriptor(const QString &dockElement, const QStri
             {QStringLiteral("location"), currentLocation},
             {QStringLiteral("parentLocation"), parentLocation},
             {QStringLiteral("canGoBack"), currentLocation != rootLocation},
-            {QStringLiteral("entries"), directoryEntriesForPath(currentLocation, state)},
+            {QStringLiteral("entries"), entries},
             {QStringLiteral("sortField"), popupSortFieldToString(state.field)},
             {QStringLiteral("sortDescending"), state.order == Qt::DescendingOrder},
         };
@@ -1735,6 +1798,35 @@ void TaskManager::activatePopupEntry(const QString &dockElement, const QString &
         }
 
         QDesktopServices::openUrl(QUrl::fromLocalFile(entryId));
+    }
+}
+
+void TaskManager::openPopupLocation(const QString &dockElement, const QString &location) const
+{
+    const auto [type, id] = splitDockElement(dockElement);
+    if (type.isEmpty() || id.isEmpty()) {
+        return;
+    }
+
+    QString targetLocation;
+    if (type == QStringLiteral("folder")) {
+        const QString rootLocation = normalizedFolderPath(id);
+        targetLocation = location.isEmpty() ? rootLocation : normalizedFolderPath(location);
+        if (rootLocation.isEmpty()
+                || targetLocation.isEmpty()
+                || !isWithinBasePath(rootLocation, targetLocation)
+                || !QFileInfo(targetLocation).isDir()) {
+            targetLocation = rootLocation;
+        }
+    } else if (type == QStringLiteral("group")) {
+        targetLocation = normalizedFolderPath(location);
+        if (targetLocation.isEmpty() || !QFileInfo(targetLocation).isDir()) {
+            targetLocation = launcherGroupOpenLocation(m_launcherAppModel, m_launcherGroupModel, id);
+        }
+    }
+
+    if (!targetLocation.isEmpty() && QFileInfo(targetLocation).isDir()) {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(targetLocation));
     }
 }
 
