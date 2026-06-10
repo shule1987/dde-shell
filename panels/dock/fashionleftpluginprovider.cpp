@@ -40,6 +40,8 @@
 #include <limits>
 #include <utility>
 
+#include <unistd.h>
+
 namespace dock {
 
 namespace {
@@ -117,6 +119,7 @@ struct AiCliProcessInfo
 {
     qint64 pid = 0;
     qint64 parentPid = 0;
+    qint64 startTimeMs = 0;
     QString toolId;
     QString toolName;
     QString workingDirectory;
@@ -169,9 +172,26 @@ struct RunningMusicPlayerSnapshotCacheEntry
 
 constexpr qint64 AiCliRecentCompletedWindowMs = 30LL * 60LL * 1000LL;
 
-QString aiCliSessionRootPath()
+QString codexSessionRootPath()
 {
     return QDir::cleanPath(QDir::homePath() + QStringLiteral("/.codex/sessions"));
+}
+
+QString claudeProjectsRootPath()
+{
+    return QDir::cleanPath(QDir::homePath() + QStringLiteral("/.claude/projects"));
+}
+
+QString aiCliSessionRootPath(const QString &toolId)
+{
+    if (toolId == QStringLiteral("codex")) {
+        return codexSessionRootPath();
+    }
+    if (toolId == QStringLiteral("claude")) {
+        return claudeProjectsRootPath();
+    }
+
+    return {};
 }
 
 QString canonicalExecutablePath(const QString &path);
@@ -483,13 +503,88 @@ bool isRecognizedMusicExecutable(const QString &executablePath)
     return musicDesktopCandidatesByExecutableBaseName().contains(executableBaseName);
 }
 
-QStringList sessionLogPathsForProcess(qint64 pid)
+QString claudeProjectDirectoryNameForPath(const QString &path)
+{
+    const QString cleanPath = QDir::cleanPath(path);
+    if (cleanPath.isEmpty() || cleanPath == QLatin1String(".")) {
+        return {};
+    }
+
+    QString projectDirectoryName = cleanPath;
+    projectDirectoryName.replace(QLatin1Char('/'), QLatin1Char('-'));
+    return projectDirectoryName;
+}
+
+QStringList claudeProjectDirectoriesForWorkingDirectory(const QString &workingDirectory)
+{
+    QStringList directories;
+    const QString projectsRootPath = claudeProjectsRootPath();
+    if (projectsRootPath.isEmpty() || workingDirectory.isEmpty()) {
+        return directories;
+    }
+
+    QString currentPath = QDir::cleanPath(workingDirectory);
+    const QString homePath = QDir::cleanPath(QDir::homePath());
+    while (!currentPath.isEmpty() && currentPath != QLatin1String(".")) {
+        const QString projectDirectoryName = claudeProjectDirectoryNameForPath(currentPath);
+        if (!projectDirectoryName.isEmpty()) {
+            const QString projectPath = QDir(projectsRootPath).filePath(projectDirectoryName);
+            if (QFileInfo(projectPath).isDir() && !directories.contains(projectPath)) {
+                directories << projectPath;
+            }
+        }
+
+        if (currentPath == QLatin1String("/") || currentPath == homePath) {
+            break;
+        }
+
+        const QString parentPath = QFileInfo(currentPath).dir().absolutePath();
+        if (parentPath == currentPath) {
+            break;
+        }
+        currentPath = QDir::cleanPath(parentPath);
+    }
+
+    return directories;
+}
+
+QStringList jsonlFilesInDirectories(const QStringList &directories, qint64 minimumLastModifiedMs = 0)
+{
+    QStringList filePaths;
+    for (const QString &directoryPath : directories) {
+        const QDir directory(directoryPath);
+        const QStringList entries = directory.entryList({QStringLiteral("*.jsonl")},
+                                                        QDir::Files | QDir::Readable,
+                                                        QDir::Name);
+        for (const QString &entry : entries) {
+            const QString filePath = QDir::cleanPath(directory.filePath(entry));
+            if (minimumLastModifiedMs > 0) {
+                const QFileInfo fileInfo(filePath);
+                if (fileInfo.lastModified().toMSecsSinceEpoch() + 2000 < minimumLastModifiedMs) {
+                    continue;
+                }
+            }
+
+            if (!filePaths.contains(filePath)) {
+                filePaths << filePath;
+            }
+        }
+    }
+
+    return filePaths;
+}
+
+QStringList sessionLogPathsForProcess(qint64 pid, const QString &toolId)
 {
     if (pid <= 0) {
         return {};
     }
 
-    const QString sessionsRootPath = aiCliSessionRootPath();
+    const QString sessionsRootPath = aiCliSessionRootPath(toolId);
+    if (sessionsRootPath.isEmpty()) {
+        return {};
+    }
+
     QDir fdDirectory(QStringLiteral("/proc/%1/fd").arg(pid));
     const QStringList fdEntries = fdDirectory.entryList(QDir::AllEntries | QDir::NoDotAndDotDot,
                                                         QDir::Name);
@@ -508,6 +603,21 @@ QStringList sessionLogPathsForProcess(qint64 pid)
 
         if (!sessionLogPaths.contains(cleanTargetPath)) {
             sessionLogPaths << cleanTargetPath;
+        }
+    }
+
+    return sessionLogPaths;
+}
+
+QStringList sessionLogPathsForProcess(const AiCliProcessInfo &process)
+{
+    QStringList sessionLogPaths = sessionLogPathsForProcess(process.pid, process.toolId);
+    if (process.toolId == QStringLiteral("claude")) {
+        const QStringList projectDirectories = claudeProjectDirectoriesForWorkingDirectory(process.workingDirectory);
+        for (const QString &sessionLogPath : jsonlFilesInDirectories(projectDirectories, process.startTimeMs)) {
+            if (!sessionLogPaths.contains(sessionLogPath)) {
+                sessionLogPaths << sessionLogPath;
+            }
         }
     }
 
@@ -564,7 +674,17 @@ QByteArray readTailOfFile(const QString &filePath, qint64 maxBytes)
     return data;
 }
 
-AiCliSessionLogSnapshot parseAiCliSessionLogSnapshot(const QByteArray &tailData)
+QDateTime timestampFromSessionLogObject(const QJsonObject &object)
+{
+    const QString timestampText = object.value(QStringLiteral("timestamp")).toString().trimmed();
+    QDateTime timestamp = QDateTime::fromString(timestampText, Qt::ISODateWithMs);
+    if (!timestamp.isValid()) {
+        timestamp = QDateTime::fromString(timestampText, Qt::ISODate);
+    }
+    return timestamp.isValid() ? timestamp.toUTC() : QDateTime();
+}
+
+AiCliSessionLogSnapshot parseCodexSessionLogSnapshot(const QByteArray &tailData)
 {
     const QList<QByteArray> lines = tailData.split('\n');
     for (int index = lines.size() - 1; index >= 0; --index) {
@@ -595,22 +715,87 @@ AiCliSessionLogSnapshot parseAiCliSessionLogSnapshot(const QByteArray &tailData)
             ? AiCliTaskState::Completed
             : AiCliTaskState::Running;
 
-        const QString timestampText = object.value(QStringLiteral("timestamp")).toString().trimmed();
-        snapshot.eventTimeUtc = QDateTime::fromString(timestampText, Qt::ISODateWithMs);
-        if (!snapshot.eventTimeUtc.isValid()) {
-            snapshot.eventTimeUtc = QDateTime::fromString(timestampText, Qt::ISODate);
-        }
-        if (snapshot.eventTimeUtc.isValid()) {
-            snapshot.eventTimeUtc = snapshot.eventTimeUtc.toUTC();
-        }
-
+        snapshot.eventTimeUtc = timestampFromSessionLogObject(object);
         return snapshot;
     }
 
     return {};
 }
 
-AiCliSessionLogSnapshot sessionLogSnapshot(const QString &sessionLogPath)
+AiCliSessionLogSnapshot parseClaudeSessionLogSnapshot(const QByteArray &tailData)
+{
+    const QList<QByteArray> lines = tailData.split('\n');
+    for (int index = lines.size() - 1; index >= 0; --index) {
+        const QByteArray line = lines.at(index).trimmed();
+        if (line.isEmpty()) {
+            continue;
+        }
+
+        const QJsonDocument document = QJsonDocument::fromJson(line);
+        if (!document.isObject()) {
+            continue;
+        }
+
+        const QJsonObject object = document.object();
+        const QString type = object.value(QStringLiteral("type")).toString().trimmed();
+        if (type.isEmpty()
+            || type == QStringLiteral("last-prompt")
+            || type == QStringLiteral("file-history-snapshot")) {
+            continue;
+        }
+
+        AiCliSessionLogSnapshot snapshot;
+        snapshot.eventTimeUtc = timestampFromSessionLogObject(object);
+
+        if (type == QStringLiteral("system")) {
+            const QString subtype = object.value(QStringLiteral("subtype")).toString().trimmed();
+            if (subtype != QStringLiteral("turn_duration")) {
+                continue;
+            }
+
+            snapshot.eventType = subtype;
+            snapshot.taskState = AiCliTaskState::Completed;
+            return snapshot;
+        }
+
+        if (type == QStringLiteral("assistant")) {
+            const QJsonObject message = object.value(QStringLiteral("message")).toObject();
+            const QString stopReason = message.value(QStringLiteral("stop_reason")).toString().trimmed();
+            if (stopReason == QStringLiteral("tool_use") || stopReason.isEmpty()) {
+                snapshot.eventType = stopReason.isEmpty()
+                    ? QStringLiteral("assistant_streaming")
+                    : stopReason;
+                snapshot.taskState = AiCliTaskState::Running;
+            } else {
+                snapshot.eventType = stopReason;
+                snapshot.taskState = AiCliTaskState::Completed;
+            }
+            return snapshot;
+        }
+
+        if (type == QStringLiteral("user")) {
+            snapshot.eventType = type;
+            snapshot.taskState = AiCliTaskState::Running;
+            return snapshot;
+        }
+    }
+
+    return {};
+}
+
+AiCliSessionLogSnapshot parseAiCliSessionLogSnapshot(const QString &toolId, const QByteArray &tailData)
+{
+    if (toolId == QStringLiteral("codex")) {
+        return parseCodexSessionLogSnapshot(tailData);
+    }
+    if (toolId == QStringLiteral("claude")) {
+        return parseClaudeSessionLogSnapshot(tailData);
+    }
+
+    return {};
+}
+
+AiCliSessionLogSnapshot sessionLogSnapshot(const QString &toolId, const QString &sessionLogPath)
 {
     const QFileInfo fileInfo(sessionLogPath);
     if (!fileInfo.isFile()) {
@@ -621,9 +806,10 @@ AiCliSessionLogSnapshot sessionLogSnapshot(const QString &sessionLogPath)
     const qint64 lastModifiedMs = fileInfo.lastModified().toMSecsSinceEpoch();
 
     auto &cache = aiCliSessionLogCache();
+    const QString cacheKey = toolId + QLatin1Char(':') + sessionLogPath;
     {
         QMutexLocker locker(&aiCliSessionLogCacheMutex());
-        const auto cachedEntry = cache.constFind(sessionLogPath);
+        const auto cachedEntry = cache.constFind(cacheKey);
         if (cachedEntry != cache.cend()
             && cachedEntry->fileSize == fileSize
             && cachedEntry->lastModifiedMs == lastModifiedMs) {
@@ -638,10 +824,13 @@ AiCliSessionLogSnapshot sessionLogSnapshot(const QString &sessionLogPath)
         1024 * 1024,
     };
     for (qint64 probeSize : probeSizes) {
-        snapshot = parseAiCliSessionLogSnapshot(readTailOfFile(sessionLogPath, probeSize));
+        snapshot = parseAiCliSessionLogSnapshot(toolId, readTailOfFile(sessionLogPath, probeSize));
         if (snapshot.taskState != AiCliTaskState::Unknown || fileSize <= probeSize) {
             break;
         }
+    }
+    if (snapshot.taskState == AiCliTaskState::Completed && !snapshot.eventTimeUtc.isValid()) {
+        snapshot.eventTimeUtc = fileInfo.lastModified().toUTC();
     }
 
     AiCliSessionLogCacheEntry cacheEntry;
@@ -650,7 +839,7 @@ AiCliSessionLogSnapshot sessionLogSnapshot(const QString &sessionLogPath)
     cacheEntry.snapshot = snapshot;
     {
         QMutexLocker locker(&aiCliSessionLogCacheMutex());
-        cache.insert(sessionLogPath, cacheEntry);
+        cache.insert(cacheKey, cacheEntry);
     }
     return snapshot;
 }
@@ -864,6 +1053,69 @@ qint64 parentPidForProcess(qint64 pid)
     return ppidOk ? ppid : 0;
 }
 
+qint64 systemBootTimeMs()
+{
+    static qint64 cachedBootTimeMs = -1;
+    if (cachedBootTimeMs >= 0) {
+        return cachedBootTimeMs;
+    }
+
+    QFile statFile(QStringLiteral("/proc/stat"));
+    if (!statFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        cachedBootTimeMs = 0;
+        return cachedBootTimeMs;
+    }
+
+    while (!statFile.atEnd()) {
+        const QString line = QString::fromLocal8Bit(statFile.readLine()).simplified();
+        if (!line.startsWith(QStringLiteral("btime "))) {
+            continue;
+        }
+
+        bool secondsOk = false;
+        const qint64 bootTimeSeconds = line.section(QLatin1Char(' '), 1, 1).toLongLong(&secondsOk);
+        cachedBootTimeMs = secondsOk ? bootTimeSeconds * 1000LL : 0;
+        return cachedBootTimeMs;
+    }
+
+    cachedBootTimeMs = 0;
+    return cachedBootTimeMs;
+}
+
+qint64 processStartTimeMs(qint64 pid)
+{
+    if (pid <= 0) {
+        return 0;
+    }
+
+    QFile statFile(QStringLiteral("/proc/%1/stat").arg(pid));
+    if (!statFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return 0;
+    }
+
+    const QString statText = QString::fromLocal8Bit(statFile.readAll()).trimmed();
+    const int closingParenIndex = statText.lastIndexOf(QLatin1Char(')'));
+    if (closingParenIndex < 0 || closingParenIndex + 2 >= statText.size()) {
+        return 0;
+    }
+
+    const QString trailingFields = statText.mid(closingParenIndex + 2);
+    const QStringList fields = trailingFields.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    if (fields.size() <= 19) {
+        return 0;
+    }
+
+    bool ticksOk = false;
+    const qint64 startTicks = fields.at(19).toLongLong(&ticksOk);
+    const qint64 bootTimeMs = systemBootTimeMs();
+    const long clockTicksPerSecond = sysconf(_SC_CLK_TCK);
+    if (!ticksOk || startTicks < 0 || bootTimeMs <= 0 || clockTicksPerSecond <= 0) {
+        return 0;
+    }
+
+    return bootTimeMs + (startTicks * 1000LL / clockTicksPerSecond);
+}
+
 bool processHasAncestor(qint64 pid, qint64 ancestorPid)
 {
     if (pid <= 0 || ancestorPid <= 0) {
@@ -952,11 +1204,12 @@ QList<AiCliProcessInfo> currentAiCliProcesses()
         AiCliProcessInfo processInfo;
         processInfo.pid = pid;
         processInfo.parentPid = parentPidForProcess(pid);
+        processInfo.startTimeMs = processStartTimeMs(pid);
         processInfo.toolId = toolId;
         processInfo.toolName = aiToolDisplayName(toolId);
         processInfo.workingDirectory = QFile::symLinkTarget(procBasePath + QStringLiteral("/cwd"));
         processInfo.arguments = arguments;
-        processInfo.sessionLogPath = primarySessionLogPath(sessionLogPathsForProcess(pid));
+        processInfo.sessionLogPath = primarySessionLogPath(sessionLogPathsForProcess(processInfo));
         detectedProcesses << processInfo;
     }
 
@@ -3368,8 +3621,8 @@ void FashionLeftPluginProvider::refreshAiState()
             AiCliTaskState taskState = AiCliTaskState::Running;
             AiCliSessionLogSnapshot snapshot;
             bool hasSessionSnapshot = false;
-            if (process.toolId == QStringLiteral("codex") && !process.sessionLogPath.isEmpty()) {
-                snapshot = sessionLogSnapshot(process.sessionLogPath);
+            if (!process.sessionLogPath.isEmpty()) {
+                snapshot = sessionLogSnapshot(process.toolId, process.sessionLogPath);
                 if (snapshot.taskState != AiCliTaskState::Unknown) {
                     taskState = snapshot.taskState;
                     hasSessionSnapshot = true;
