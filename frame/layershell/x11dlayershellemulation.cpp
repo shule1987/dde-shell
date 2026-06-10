@@ -37,7 +37,15 @@ void setWindowStateAbove(QWindow *window)
     xcb_ewmh_init_atoms_replies(&ewmhConnection, cookie, nullptr);
 
     xcb_atom_t states[] = { ewmhConnection._NET_WM_STATE_ABOVE };
+    xcb_ewmh_request_change_wm_state(&ewmhConnection,
+                                     0,
+                                     window->winId(),
+                                     XCB_EWMH_WM_STATE_ADD,
+                                     ewmhConnection._NET_WM_STATE_ABOVE,
+                                     XCB_ATOM_NONE,
+                                     XCB_EWMH_CLIENT_SOURCE_TYPE_NORMAL);
     xcb_ewmh_set_wm_state(&ewmhConnection, window->winId(), 1, states);
+    xcb_ewmh_request_restack_window(&ewmhConnection, 0, window->winId(), XCB_WINDOW_NONE, XCB_STACK_MODE_ABOVE);
     xcb_flush(x11Application->connection());
     xcb_ewmh_connection_wipe(&ewmhConnection);
 }
@@ -153,7 +161,12 @@ void LayerShellEmulation::onLayerChanged()
             // while plasma works all right, maybe deepin kwin bug?
             // FIXME: fix above
             m_window->setFlags(m_window->flags() & ~Qt::WindowStaysOnBottomHint);
-            xcbWindow->setWindowType(QNativeInterface::Private::QXcbWindow::Notification);
+            if (m_dlayerShellWindow->scope() == QStringLiteral("dde-shell/dock")) {
+                xcbWindow->setWindowType(QNativeInterface::Private::QXcbWindow::Dock);
+                setWindowStateAbove(m_window);
+            } else {
+                xcbWindow->setWindowType(QNativeInterface::Private::QXcbWindow::Notification);
+            }
             break;
         }
     }

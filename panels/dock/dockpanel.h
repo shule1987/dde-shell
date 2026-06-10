@@ -100,6 +100,7 @@ public:
 
     Q_INVOKABLE void notifyDockPositionChanged(int offsetX, int offsetY);
     Q_INVOKABLE void reportMousePresence(bool containsMouse, const QPointF &cursorPosition = QPointF());
+    Q_INVOKABLE void reportDockChildWindowVisible(bool visible);
 
     bool showInPrimary() const;
     void setShowInPrimary(bool newShowInPrimary);
@@ -168,6 +169,7 @@ Q_SIGNALS:
 private:
     void setDbusLauncherShown(bool shown);
     void updateLauncherShown();
+    void ensureWindowStaysOnTop();
 
 private:
     ColorTheme m_theme;
@@ -183,6 +185,7 @@ private:
     bool m_contextDragging;
     bool m_containsMouse;
     bool m_reportedContainsMouse;
+    bool m_dockChildWindowVisible;
     bool m_isResizing;
     bool m_frontendGeometryReady;
     QPointF m_cursorPosition;

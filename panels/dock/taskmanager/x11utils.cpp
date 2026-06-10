@@ -4,6 +4,7 @@
 
 #include "x11utils.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <csignal>
 #include <unistd.h>
@@ -23,6 +24,44 @@
 Q_LOGGING_CATEGORY(x11UtilsLog, "org.deepin.dde.shell.dock.taskmanager.x11utils")
 
 namespace dock {
+namespace {
+constexpr int kVisibleAlphaThreshold = 8;
+constexpr qreal kTransparentPaddingCropThreshold = 0.82;
+
+QRect visibleIconBounds(const QImage &image)
+{
+    QRect bounds;
+    for (int y = 0; y < image.height(); ++y) {
+        const auto *line = reinterpret_cast<const QRgb *>(image.constScanLine(y));
+        for (int x = 0; x < image.width(); ++x) {
+            if (qAlpha(line[x]) > kVisibleAlphaThreshold) {
+                const QRect pixelRect(x, y, 1, 1);
+                bounds = bounds.isNull() ? pixelRect : bounds.united(pixelRect);
+            }
+        }
+    }
+
+    return bounds;
+}
+
+QImage normalizedWindowIconImage(const QImage &image, const QRect &visibleBounds)
+{
+    if (image.isNull() || !visibleBounds.isValid()) {
+        return image;
+    }
+
+    const bool hasLargeTransparentPadding =
+        visibleBounds.width() < image.width() * kTransparentPaddingCropThreshold ||
+        visibleBounds.height() < image.height() * kTransparentPaddingCropThreshold;
+    if (!hasLargeTransparentPadding) {
+        return image;
+    }
+
+    const int padding = std::max(1, qRound(std::max(visibleBounds.width(), visibleBounds.height()) * 0.04));
+    const QRect cropRect = visibleBounds.adjusted(-padding, -padding, padding, padding).intersected(image.rect());
+    return image.copy(cropRect);
+}
+}
 
 X11Utils* X11Utils::instance()
 {
@@ -184,18 +223,39 @@ QString X11Utils::getWindowIcon(const xcb_window_t &window)
             xcb_ewmh_get_wm_icon_reply_wipe(ptr);
         });
     
+        QImage bestIcon;
+        QRect bestVisibleBounds;
+        uint64_t bestVisibleArea = 0;
+        uint64_t bestCanvasArea = 0;
         xcb_ewmh_wm_icon_iterator_t iter = xcb_ewmh_get_wm_icon_iterator(replyPtr.get());
-        xcb_ewmh_wm_icon_iterator_t wmIconIt{0, 0, nullptr, 0, 0};
         for (; iter.rem; xcb_ewmh_get_wm_icon_next(&iter)) {
-            const uint32_t size = iter.width * iter.height;
-            if (size > 0 && size > wmIconIt.width * wmIconIt.height) {
-                wmIconIt = iter;
+            if (iter.width == 0 || iter.height == 0 || !iter.data) {
+                continue;
+            }
+
+            QImage candidate = QImage(reinterpret_cast<uchar *>(iter.data),
+                                      iter.width,
+                                      iter.height,
+                                      QImage::Format_ARGB32).copy();
+            const QRect visibleBounds = visibleIconBounds(candidate);
+            if (!visibleBounds.isValid()) {
+                continue;
+            }
+
+            const uint64_t visibleArea = static_cast<uint64_t>(visibleBounds.width()) * visibleBounds.height();
+            const uint64_t canvasArea = static_cast<uint64_t>(iter.width) * iter.height;
+            if (bestIcon.isNull() ||
+                visibleArea > bestVisibleArea ||
+                (visibleArea == bestVisibleArea && canvasArea > bestCanvasArea)) {
+                bestIcon = std::move(candidate);
+                bestVisibleBounds = visibleBounds;
+                bestVisibleArea = visibleArea;
+                bestCanvasArea = canvasArea;
             }
         }
 
-        if (!wmIconIt.data) break;
-
-        QImage img = QImage((uchar *)wmIconIt.data, wmIconIt.width, wmIconIt.height, QImage::Format_ARGB32).copy();
+        if (bestIcon.isNull()) break;
+        QImage img = normalizedWindowIconImage(bestIcon, bestVisibleBounds);
 
         QBuffer buffer;
         buffer.open(QIODevice::WriteOnly);

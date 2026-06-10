@@ -29,6 +29,11 @@
 #include <DGuiApplicationHelper>
 #include <DPlatformTheme>
 
+#ifdef BUILD_WITH_X11
+#include <xcb/xcb.h>
+#include <xcb/xcb_ewmh.h>
+#endif
+
 #define SETTINGS DockSettings::instance()
 
 Q_LOGGING_CATEGORY(dockLog, "org.deepin.dde.shell.dock")
@@ -40,6 +45,31 @@ constexpr auto kAppearanceService = "org.deepin.dde.Appearance1";
 constexpr auto kAppearancePath = "/org/deepin/dde/Appearance1";
 constexpr auto kAppearanceInterface = "org.deepin.dde.Appearance1";
 constexpr auto kPropertiesInterface = "org.freedesktop.DBus.Properties";
+
+#ifdef BUILD_WITH_X11
+void requestWindowAbove(QWindow *window)
+{
+    auto *x11Application = qGuiApp->nativeInterface<QNativeInterface::QX11Application>();
+    if (!x11Application || !window || !window->winId()) {
+        return;
+    }
+
+    xcb_ewmh_connection_t ewmhConnection;
+    xcb_intern_atom_cookie_t *cookie = xcb_ewmh_init_atoms(x11Application->connection(), &ewmhConnection);
+    xcb_ewmh_init_atoms_replies(&ewmhConnection, cookie, nullptr);
+
+    xcb_ewmh_request_change_wm_state(&ewmhConnection,
+                                     0,
+                                     window->winId(),
+                                     XCB_EWMH_WM_STATE_ADD,
+                                     ewmhConnection._NET_WM_STATE_ABOVE,
+                                     XCB_ATOM_NONE,
+                                     XCB_EWMH_CLIENT_SOURCE_TYPE_NORMAL);
+    xcb_ewmh_request_restack_window(&ewmhConnection, 0, window->winId(), XCB_WINDOW_NONE, XCB_STACK_MODE_ABOVE);
+    xcb_flush(x11Application->connection());
+    xcb_ewmh_connection_wipe(&ewmhConnection);
+}
+#endif
 
 Dtk::Gui::DGuiApplicationHelper::ColorType explicitThemeTypeFromName(const QString &themeName)
 {
@@ -175,6 +205,7 @@ DockPanel::DockPanel(QObject *parent)
     , m_contextDragging(false)
     , m_containsMouse(false)
     , m_reportedContainsMouse(false)
+    , m_dockChildWindowVisible(false)
     , m_isResizing(false)
     , m_frontendGeometryReady(false)
     , m_cursorPosition(0, 0)
@@ -730,6 +761,29 @@ void DockPanel::reportMousePresence(bool containsMouse, const QPointF &cursorPos
     }
 }
 
+void DockPanel::reportDockChildWindowVisible(bool visible)
+{
+    const bool previousContainsMouse = containsMouse();
+    if (visible) {
+        ensureWindowStaysOnTop();
+        QTimer::singleShot(80, this, [this]() {
+            if (m_dockChildWindowVisible) {
+                ensureWindowStaysOnTop();
+            }
+        });
+        setHideState(Show);
+    }
+
+    if (m_dockChildWindowVisible == visible) {
+        return;
+    }
+
+    m_dockChildWindowVisible = visible;
+    if (previousContainsMouse != containsMouse()) {
+        Q_EMIT containsMouseChanged(containsMouse());
+    }
+}
+
 void DockPanel::launcherVisibleChanged(bool visible)
 {
     setDbusLauncherShown(visible);
@@ -760,6 +814,15 @@ void DockPanel::updateLauncherShown()
     if (newHideState != oldHideState) {
         Q_EMIT hideStateChanged(newHideState);
     }
+}
+
+void DockPanel::ensureWindowStaysOnTop()
+{
+#ifdef BUILD_WITH_X11
+    if (QGuiApplication::platformName() == QStringLiteral("xcb")) {
+        requestWindowAbove(window());
+    }
+#endif
 }
 
 void DockPanel::updateDockScreen()
@@ -861,7 +924,7 @@ void DockPanel::setContextDragging(bool newContextDragging)
 
 bool DockPanel::containsMouse() const
 {
-    return m_containsMouse || m_reportedContainsMouse;
+    return m_containsMouse || m_reportedContainsMouse || m_dockChildWindowVisible;
 }
 
 QPointF DockPanel::cursorPosition() const

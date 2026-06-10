@@ -154,6 +154,7 @@ void TreeLandWindowMonitor::stop()
 
 void TreeLandWindowMonitor::clear()
 {
+    Q_EMIT previewVisibleChanged(false);
     m_windows.clear();
     m_dockPreview.reset(nullptr);
 }
@@ -198,6 +199,7 @@ void TreeLandWindowMonitor::requestPreview(QAbstractItemModel *sourceModel,
         });
         connect(m_dockPreview.get(), &TreeLandDockPreviewContext::closed, this, [this]() {
             // 当预览关闭时，发出信号清空过滤状态
+            emit previewVisibleChanged(false);
             emit previewShouldClear();
         });
     }
@@ -219,11 +221,14 @@ void TreeLandWindowMonitor::requestPreview(QAbstractItemModel *sourceModel,
             int size = array.size() * sizeof(uint32_t);
             byteArray.resize(size);
             memcpy(byteArray.data(), array.constData(), size);
+            emit previewVisibleChanged(true);
             m_dockPreview->showWindowsPreview(byteArray, previewXoffset, previewYoffset, direction);
         } else {
+            emit previewVisibleChanged(true);
             m_dockPreview->show_tooltip("???", previewXoffset, previewYoffset, direction);
         }
     } else {
+        emit previewVisibleChanged(true);
         m_dockPreview->show_tooltip("???", previewXoffset, previewYoffset, direction);
     }
 }

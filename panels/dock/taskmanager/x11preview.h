@@ -15,6 +15,7 @@
 #include <QPointer>
 #include <QPropertyAnimation>
 #include <QRect>
+#include <QModelIndex>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QWindow>
@@ -92,6 +93,9 @@ private:
     inline void initUI();
     inline void updateSize(int windowCount = -1);
     void updatePreviewIconFromString(const QString &stringData);
+    void syncHoveredPreviewAtCursor();
+    void syncHoveredPreview(const QModelIndex &index);
+    void clearHoveredPreview();
     QRect previewGeometry() const;
 
 public Q_SLOTS:
@@ -123,6 +127,7 @@ private:
     uint32_t m_direction;
     bool m_positionInitialized;
     double m_previewOpacity;
+    uint32_t m_previewWindowId;
 
     QPointer<QWindow> m_baseWindow;
 

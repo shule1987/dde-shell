@@ -47,6 +47,7 @@ bool XcbEventFilter::nativeEventFilter(const QByteArray &eventType, void *messag
 X11WindowMonitor::X11WindowMonitor(QObject* parent)
     : AbstractWindowMonitor(parent)
     , m_opacity(0.2)
+    , m_previewVisible(false)
 {
     monitor = this;
     connect(this, &X11WindowMonitor::windowMapped, this, &X11WindowMonitor::onWindowMapped);
@@ -93,6 +94,7 @@ void X11WindowMonitor::stop()
 
 void X11WindowMonitor::clear()
 {
+    setPreviewVisible(false);
     m_windows.clear();
     m_windowPreview.reset(nullptr);
 }
@@ -127,6 +129,7 @@ void X11WindowMonitor::previewWindow(uint32_t winId)
                                                           QStringLiteral("PreviewWindow"));
     message << QVariant::fromValue(winId);
     QDBusConnection::sessionBus().asyncCall(message);
+    setPreviewVisible(true);
 }
 
 void X11WindowMonitor::cancelPreviewWindow()
@@ -163,6 +166,7 @@ void X11WindowMonitor::requestPreview(QAbstractItemModel *sourceModel,
                                           previewXoffset,
                                           previewYoffset,
                                           direction);
+    setPreviewVisible(true);
 }
 
 void X11WindowMonitor::requestUpdateWindowIconGeometry(const QModelIndex &index, const QRect &geometry, QObject *delegate) const
@@ -176,6 +180,16 @@ void X11WindowMonitor::clearPreviewState()
 {
     // 发出信号通知 TaskManager 清空预览过滤状态
     emit previewShouldClear();
+}
+
+void X11WindowMonitor::setPreviewVisible(bool visible)
+{
+    if (m_previewVisible == visible) {
+        return;
+    }
+
+    m_previewVisible = visible;
+    Q_EMIT previewVisibleChanged(visible);
 }
 
 void X11WindowMonitor::onWindowMapped(xcb_window_t xcb_window)

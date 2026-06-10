@@ -1233,6 +1233,16 @@ bool TaskManager::init()
             m_hoverPreviewModel->clearFilter();
         }
     });
+    connect(m_windowMonitor.data(), &AbstractWindowMonitor::previewVisibleChanged, this, [this](bool visible) {
+        auto *dockPanel = parentApplet();
+        if (!dockPanel) {
+            return;
+        }
+
+        QMetaObject::invokeMethod(dockPanel,
+                                  "reportDockChildWindowVisible",
+                                  Q_ARG(bool, visible));
+    });
 
     // 设置preview opacity
     DS_NAMESPACE::DAppletBridge appearanceBridge("org.deepin.ds.dde-appearance");

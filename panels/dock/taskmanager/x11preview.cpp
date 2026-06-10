@@ -30,6 +30,7 @@
 #include <QPainterPath>
 #include <QPixmap>
 #include <QScreen>
+#include <QCursor>
 #include <QTimer>
 #include <QWindow>
 #include <QtConcurrent>
@@ -429,6 +430,7 @@ X11WindowPreviewContainer::X11WindowPreviewContainer(X11WindowMonitor *monitor, 
     , m_direction(0)
     , m_positionInitialized(false)
     , m_previewOpacity(0.4)
+    , m_previewWindowId(0)
 {
     m_hideTimer = new QTimer(this);
     m_hideTimer->setSingleShot(true);
@@ -465,20 +467,7 @@ X11WindowPreviewContainer::X11WindowPreviewContainer(X11WindowMonitor *monitor, 
         dismissPreview();
     });
 
-    connect(m_view, &QListView::entered, this, [this](const QModelIndex &enter) {
-        m_closeAllButton->setVisible(false);
-        if (WM_HELPER->hasComposite()) {
-            m_monitor->previewWindow(enter.data(TaskManager::WinIdRole).toInt());
-        }
-
-        // 获取图标，优先使用窗口图标，如果为空则使用应用图标
-        QVariant iconData = enter.data(TaskManager::WinIconRole);
-        if (iconData.toString().isEmpty()) {
-            iconData = enter.data(TaskManager::IconNameRole);
-        }
-        updatePreviewIconFromString(iconData.toString());
-        updatePreviewTitle(enter.data(TaskManager::WinTitleRole).toString());
-    });
+    connect(m_view, &QListView::entered, this, &X11WindowPreviewContainer::syncHoveredPreview);
 }
 
 void X11WindowPreviewContainer::setPreviewOpacity(double opacity)
@@ -566,10 +555,12 @@ void X11WindowPreviewContainer::showPreviewWithModel(QAbstractItemModel *sourceM
         setGeometry(previewGeometry());
         m_positionInitialized = true;
         DBlurEffectWidget::show();
+        QTimer::singleShot(0, this, &X11WindowPreviewContainer::syncHoveredPreviewAtCursor);
         return;
     }
 
     updatePosition();
+    QTimer::singleShot(0, this, &X11WindowPreviewContainer::syncHoveredPreviewAtCursor);
 }
 
 void X11WindowPreviewContainer::updateOrientation()
@@ -624,10 +615,12 @@ void X11WindowPreviewContainer::hideEvent(QHideEvent*)
 {
     m_positionAnimation->stop();
     m_positionInitialized = false;
+    m_previewWindowId = 0;
     // 只通知监视器清空预览状态，让 TaskManager 统一管理模型清理
     // 不要在这里断开模型连接，因为 clearPreviewState 信号会触发 TaskManager 的 clearFilter
     // QPointer 会自动处理对象销毁的情况
     if (m_monitor) {
+        m_monitor->setPreviewVisible(false);
         if (WM_HELPER->hasComposite()) {
             m_monitor->cancelPreviewWindow();
         }
@@ -726,6 +719,58 @@ void X11WindowPreviewContainer::updatePreviewTitle(const QString& title)
     m_previewTitle->setText(m_previewTitleStr);
 }
 
+void X11WindowPreviewContainer::syncHoveredPreviewAtCursor()
+{
+    if (!m_view || !m_view->viewport() || !m_view->isVisible()) {
+        return;
+    }
+
+    const QPoint localPos = m_view->viewport()->mapFromGlobal(QCursor::pos());
+    if (!m_view->viewport()->rect().contains(localPos)) {
+        return;
+    }
+
+    syncHoveredPreview(m_view->indexAt(localPos));
+}
+
+void X11WindowPreviewContainer::syncHoveredPreview(const QModelIndex &index)
+{
+    if (!index.isValid() || !m_monitor) {
+        return;
+    }
+
+    const uint32_t winId = index.data(TaskManager::WinIdRole).toUInt();
+    if (winId == 0 || winId == m_previewWindowId) {
+        return;
+    }
+
+    m_previewWindowId = winId;
+    m_closeAllButton->setVisible(false);
+    if (WM_HELPER->hasComposite()) {
+        m_monitor->previewWindow(winId);
+    }
+
+    // 获取图标，优先使用窗口图标，如果为空则使用应用图标
+    QVariant iconData = index.data(TaskManager::WinIconRole);
+    if (iconData.toString().isEmpty()) {
+        iconData = index.data(TaskManager::IconNameRole);
+    }
+    updatePreviewIconFromString(iconData.toString());
+    updatePreviewTitle(index.data(TaskManager::WinTitleRole).toString());
+}
+
+void X11WindowPreviewContainer::clearHoveredPreview()
+{
+    if (m_previewWindowId == 0) {
+        return;
+    }
+
+    m_previewWindowId = 0;
+    if (m_monitor && WM_HELPER->hasComposite()) {
+        m_monitor->cancelPreviewWindow();
+    }
+}
+
 void X11WindowPreviewContainer::applyTheme()
 {
     const auto themeType = previewThemeType();
@@ -797,6 +842,8 @@ void X11WindowPreviewContainer::initUI()
     // 模型将在 showPreviewWithModel 中设置
     m_view->setItemDelegate(new AppItemWindowDeletegate(m_view, this));
     m_view->setMouseTracking(true);
+    m_view->viewport()->setMouseTracking(true);
+    m_view->viewport()->setAttribute(Qt::WA_Hover, true);
     m_view->viewport()->installEventFilter(this);
     m_view->setAutoFillBackground(false);
     m_view->setFrameStyle(QFrame::NoFrame);
@@ -900,10 +947,16 @@ bool X11WindowPreviewContainer::eventFilter(QObject *watched, QEvent *event)
     if (watched != m_view->viewport()) return false;
 
     switch (event->type()) {
+    case QEvent::Enter:
+    case QEvent::HoverEnter:
+    case QEvent::HoverMove:
+    case QEvent::MouseMove: {
+        syncHoveredPreviewAtCursor();
+        break;
+    }
+    case QEvent::Leave:
     case QEvent::HoverLeave: {
-        if (WM_HELPER->hasComposite()) {
-            m_monitor->cancelPreviewWindow();
-        }
+        clearHoveredPreview();
 
         m_closeAllButton->setVisible(true);
         if (!m_sourceModel || m_sourceModel->rowCount() == 0)
@@ -916,8 +969,7 @@ bool X11WindowPreviewContainer::eventFilter(QObject *watched, QEvent *event)
         if (mouseEvent->button() != Qt::LeftButton) return false;
 
         // cancel preview b4 active window
-        if (WM_HELPER->hasComposite())
-            m_monitor->cancelPreviewWindow();
+        clearHoveredPreview();
 
         auto index = m_view->indexAt(mouseEvent->pos());
         if (index.isValid()) {

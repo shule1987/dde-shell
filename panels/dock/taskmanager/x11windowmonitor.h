@@ -43,6 +43,7 @@ public:
     void cancelPreviewWindow();
     void setPreviewOpacity(double opacity);
     void clearPreviewState();
+    void setPreviewVisible(bool visible);
 
     void
     requestPreview(QAbstractItemModel *sourceModel,
@@ -73,6 +74,7 @@ private:
     std::unique_ptr<X11WindowPreviewContainer> m_windowPreview;
     QHash<xcb_window_t, QSharedPointer<X11Window>> m_windows;
     double m_opacity;
+    bool m_previewVisible;
 
 };
 }

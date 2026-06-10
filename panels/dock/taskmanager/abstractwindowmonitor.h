@@ -61,6 +61,7 @@ Q_SIGNALS:
     void windowFullscreenChanged(bool);
     void WindowMonitorShutdown();
     void previewShouldClear();
+    void previewVisibleChanged(bool visible);
 
 private:
     QList<AbstractWindow*> m_trackedWindows;
