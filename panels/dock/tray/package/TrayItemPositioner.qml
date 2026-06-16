@@ -13,6 +13,15 @@ Control {
         return model.sectionType !== "stashed" && model.visibility && model.dockVisible
     }
     property size visualSize: Qt.size(0, 0)
+    property point cachedVisualPosition: Qt.point(0, 0)
+    readonly property bool keepCrossAxisPosition: model.sectionType === "collapsable"
+        && collapsed
+        && model.visualIndex < 0
+    readonly property point effectiveVisualPosition: keepCrossAxisPosition
+        ? (isHorizontal
+            ? Qt.point(visualPosition.x, cachedVisualPosition.y)
+            : Qt.point(cachedVisualPosition.x, visualPosition.y))
+        : visualPosition
 
     property point visualPosition: DDT.TrayItemPositionRegister.visualPosition
     property bool isDragging: DDT.TraySortOrderModel.actionsAlwaysVisible
@@ -41,8 +50,8 @@ Control {
     width: visualSize.width !== 0 ? visualSize.width : DDT.TrayItemPositionManager.itemVisualSize.width
     height: visualSize.height !== 0 ? visualSize.height : DDT.TrayItemPositionManager.itemVisualSize.height
 
-    x: visualPosition.x
-    y: visualPosition.y
+    x: effectiveVisualPosition.x
+    y: effectiveVisualPosition.y
     Behavior on x {
         enabled: isHorizontal && animationEnable
         NumberAnimation { duration: 200; easing.type: collapsed || !DDT.TraySortOrderModel.isCollapsing ? Easing.OutQuad : Easing.InQuad }
@@ -79,4 +88,16 @@ Control {
             }
         }
     ]
+
+    onVisualPositionChanged: {
+        if (model.visualIndex >= 0) {
+            cachedVisualPosition = visualPosition
+        }
+    }
+
+    Component.onCompleted: {
+        if (model.visualIndex >= 0) {
+            cachedVisualPosition = visualPosition
+        }
+    }
 }

@@ -37,6 +37,7 @@ private:
     struct ProcessInfo {
         QProcess *process = nullptr;
         QString pluginPath;
+        QString groupName;
         int retryCount = 0;
     };
 

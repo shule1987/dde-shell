@@ -379,6 +379,7 @@ void TraySortOrderModel::updateVisualIndexes()
 {
     m_isUpdating = true;
     emit isUpdatingChanged(true);
+    QStringList visibleSurfaceIds;
 
     auto &positionManager = TrayItemPositionManager::instance();
     positionManager.beginLayoutSync();
@@ -412,7 +413,22 @@ void TraySortOrderModel::updateVisualIndexes()
     const auto surfaceAvailable = [this](const QString &surfaceId) {
         return surfaceId.startsWith(QLatin1String("internal/")) || m_availableSurfaceIdSet.contains(surfaceId);
     };
-    
+
+    const auto normalItemVisible = [this](QStandardItem *trayItem, const QString &id) {
+        if (!trayItem) {
+            return false;
+        }
+
+        const auto pluginFlags = trayItem->data(TraySortOrderModel::PluginFlagsRole).toInt();
+        return (pluginFlags & Dock::Attribute_ForceDock)
+            || !(pluginFlags & Dock::Attribute_CanSetting)
+            || !m_hiddenIdSet.contains(id);
+    };
+
+    const auto normalDockVisible = [this, &surfaceAvailable](const QString &id) {
+        return !m_dockHiddenIdSet.contains(id) && surfaceAvailable(id);
+    };
+
     for (int i = 0; i < rowCount(); i++) {
         item(i)->setData(-1, TraySortOrderModel::VisualIndexRole);
     }
@@ -442,6 +458,7 @@ void TraySortOrderModel::updateVisualIndexes()
             showStashActionVisible = true;
             trayItem->setData(stashedVisualIndex, TraySortOrderModel::VisualIndexRole);
             stashedVisualIndex++;
+            visibleSurfaceIds.append(id);
         }
     }
 
@@ -463,9 +480,8 @@ void TraySortOrderModel::updateVisualIndexes()
         QStandardItem *trayItem = itemBySurfaceId(id);
         if (!trayItem) continue;
         if (trayItem->data(TraySortOrderModel::VisualIndexRole).toInt() != -1) continue;
-        auto pluginFlags = trayItem->data(TraySortOrderModel::PluginFlagsRole).toInt();
-        bool itemVisible = (pluginFlags & Dock::Attribute_ForceDock) || !(pluginFlags & Dock::Attribute_CanSetting) || !m_hiddenIdSet.contains(id);
-        bool dockVisible = !m_dockHiddenIdSet.contains(id) && surfaceAvailable(id);
+        bool itemVisible = normalItemVisible(trayItem, id);
+        bool dockVisible = normalDockVisible(id);
         trayItem->setData(SECTION_COLLAPSABLE, TraySortOrderModel::SectionTypeRole);
         trayItem->setData(itemVisible, TraySortOrderModel::VisibilityRole);
         trayItem->setData(dockVisible, TraySortOrderModel::DockVisibleRole);
@@ -475,6 +491,7 @@ void TraySortOrderModel::updateVisualIndexes()
                 reserveStagedDropSpace(currentVisualIndex);
                 assignDockVisualIndex(trayItem, currentVisualIndex);
                 currentVisualIndex++;
+                visibleSurfaceIds.append(id);
             } else {
                 // When collapsed, collapsable items should be hidden (visualIndex = -1)
                 trayItem->setData(-1, TraySortOrderModel::VisualIndexRole);
@@ -497,9 +514,8 @@ void TraySortOrderModel::updateVisualIndexes()
         QStandardItem *trayItem = itemBySurfaceId(id);
         if (!trayItem) continue;
         if (trayItem->data(TraySortOrderModel::VisualIndexRole).toInt() != -1) continue;
-        auto flags = trayItem->data(TraySortOrderModel::PluginFlagsRole).toInt();
-        bool itemVisible = (flags & Dock::Attribute_ForceDock) || !(flags & Dock::Attribute_CanSetting) || !m_hiddenIdSet.contains(id);
-        bool dockVisible = !m_dockHiddenIdSet.contains(id) && surfaceAvailable(id);
+        bool itemVisible = normalItemVisible(trayItem, id);
+        bool dockVisible = normalDockVisible(id);
         trayItem->setData(SECTION_PINNED, TraySortOrderModel::SectionTypeRole);
         trayItem->setData(itemVisible, TraySortOrderModel::VisibilityRole);
         trayItem->setData(dockVisible, TraySortOrderModel::DockVisibleRole);
@@ -507,6 +523,7 @@ void TraySortOrderModel::updateVisualIndexes()
             reserveStagedDropSpace(currentVisualIndex);
             assignDockVisualIndex(trayItem, currentVisualIndex);
             currentVisualIndex++;
+            visibleSurfaceIds.append(id);
         }
     }
 
@@ -535,17 +552,25 @@ void TraySortOrderModel::updateVisualIndexes()
         if (itemVisible && dockVisible) {
             assignDockVisualIndex(trayItem, currentVisualIndex);
             currentVisualIndex++;
+            visibleSurfaceIds.append(id);
         }
     }
 
-    // update visible item count property
-    setProperty("visualItemCount", currentVisualIndex);
+    if (m_visualItemCount != currentVisualIndex) {
+        m_visualItemCount = currentVisualIndex;
+        emit visualItemCountChanged(m_visualItemCount);
+    }
     positionManager.endLayoutSync();
     
     m_isUpdating = false;
     emit isUpdatingChanged(false);
 
-    qDebug() << "update" << m_visualItemCount << currentVisualIndex;
+    qWarning() << "tray updateVisualIndexes"
+               << "availableSurfaceCount:" << m_availableSurfaceIdSet.size()
+               << "visualItemCount:" << m_visualItemCount
+               << "collapsed:" << m_collapsed
+               << "actionsAlwaysVisible:" << m_actionsAlwaysVisible
+               << "visibleSurfaceIds:" << visibleSurfaceIds;
 }
 
 QString TraySortOrderModel::registerSurfaceId(const QVariantMap & surfaceData)
@@ -581,6 +606,13 @@ void TraySortOrderModel::loadDataFromDConfig()
     m_hiddenIdSet = QSet<QString>(m_hiddenIds.cbegin(), m_hiddenIds.cend());
     m_dockHiddenIdSet = QSet<QString>(m_dockHiddenIds.cbegin(), m_dockHiddenIds.cend());
     m_collapsed = m_dconfig->value("isCollapsed").toBool();
+    qWarning() << "tray loadDataFromDConfig"
+               << "stashed:" << m_stashedIds
+               << "collapsable:" << m_collapsableIds
+               << "pinned:" << m_pinnedIds
+               << "hidden:" << m_hiddenIds
+               << "dockHidden:" << m_dockHiddenIds
+               << "collapsed:" << m_collapsed;
 }
 
 void TraySortOrderModel::saveDataToDConfig()

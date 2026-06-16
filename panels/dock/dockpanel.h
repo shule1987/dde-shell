@@ -178,6 +178,7 @@ private:
     QPointer<QScreen> m_dockScreen;
     LoadTrayPlugins *m_loadTrayPlugins;
     bool m_compositorReady;
+    bool m_trayPluginsLoaded;
     bool m_launcherShown;
     bool m_dbusLauncherShown;
     bool m_fullscreenLauncherShown;

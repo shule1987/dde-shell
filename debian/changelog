@@ -1,3 +1,10 @@
+dde-shell (2.2.5) unstable; urgency=medium
+
+  * fix: detect Claude Code task completion in dock AI plugin.
+  * fix: stabilize dock tray loading, preview, and collapse interactions.
+
+ -- shule1987 <shule1987@qq.com>  Tue, 16 Jun 2026 10:30:00 +0800
+
 dde-shell (2.2.4) unstable; urgency=medium
 
   * fix: improve dock folder popup responsiveness.

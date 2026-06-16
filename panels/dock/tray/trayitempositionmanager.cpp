@@ -256,8 +256,13 @@ void TrayItemPositionManager::updateVisualSize()
 {
     if (m_dockHeight == 0) return;
     QSize result(visualSize(m_visualItemCount - 1, false));
+    if (m_visualSize == result) {
+        return;
+    }
+
     qDebug() << "updateVisualSize()" << m_dockHeight << result;
-    setProperty("visualSize", result);
+    m_visualSize = result;
+    emit visualSizeChanged(m_visualSize);
 }
 
 void TrayItemPositionManager::ensureRegisteredItemCapacity(int count)

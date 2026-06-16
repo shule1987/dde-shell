@@ -32,23 +32,30 @@ LQM.DelegateChooser {
         roleValue: "legacy-tray-plugin"
         TrayItemPositioner {
             id: traySurfacePositioner
-            visualSize: traySurfaceDelegate.visualSize
-            contentItem: ActionLegacyTrayPluginDelegate {
-                id: traySurfaceDelegate
-                objectName: "tray"
-                inputEventsEnabled: !disableInputEvents && (model.sectionType !== "collapsable" || !DDT.TraySortOrderModel.isCollapsing)
-                itemVisible: traySurfacePositioner.itemVisible
-                dragable: model.sectionType !== "fixed"
-                isActive: surfacePopup.isOpened
+            visualSize: traySurfaceLoader.item ? traySurfaceLoader.item.visualSize : Qt.size(0, 0)
+            contentItem: Loader {
+                id: traySurfaceLoader
+                anchors.fill: parent
+                active: model.sectionType !== "stashed"
+                sourceComponent: Component {
+                    ActionLegacyTrayPluginDelegate {
+                        objectName: "tray"
+                        inputEventsEnabled: !disableInputEvents && (model.sectionType !== "collapsable" || !DDT.TraySortOrderModel.isCollapsing)
+                        itemVisible: traySurfacePositioner.itemVisible
+                        shellSurfaceActive: traySurfacePositioner.itemVisible || traySurfacePositioner.opacity > 0.01
+                        dragable: model.sectionType !== "fixed"
+                        isActive: surfacePopup.isOpened
 
-                // trayItem's popup
-                DDT.TrayItemSurfacePopup {
-                    id: surfacePopup
-                    surfaceAcceptor: function (surfaceId) {
-                        if (root.surfaceAcceptor && !root.surfaceAcceptor(surfaceId))
-                            return false
+                        // trayItem's popup
+                        DDT.TrayItemSurfacePopup {
+                            id: surfacePopup
+                            surfaceAcceptor: function (surfaceId) {
+                                if (root.surfaceAcceptor && !root.surfaceAcceptor(surfaceId))
+                                    return false
 
-                        return surfaceId === model.surfaceId
+                                return surfaceId === model.surfaceId
+                            }
+                        }
                     }
                 }
             }

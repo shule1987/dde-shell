@@ -641,6 +641,10 @@ void PluginManager::plugin_manager_v1_create_plugin(Resource *resource, const QS
 
     auto plugin = new PluginSurface(this, pluginId, itemKey, display_name, plugin_flags, type, size_policy, qwaylandSurface, shellSurfaceResource);
     m_pluginSurfaces << plugin;
+    qWarning() << "Create tray/dock plugin surface:" << pluginId << itemKey
+               << "type:" << type
+               << "sizePolicy:" << size_policy
+               << "flags:" << plugin_flags;
     Q_EMIT pluginSurfaceCreated(plugin);
 
     sendEventMsg(resource, dockSizeMsg());

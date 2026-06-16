@@ -17,6 +17,7 @@ import org.deepin.ds.dock.tray 1.0 as DDT
 AppletItemButton {
     id: root
     property alias inputEventsEnabled: surfaceItem.inputEventsEnabled
+    property bool shellSurfaceActive: true
 
     readonly property int fallbackItemSize: DDT.TrayItemPositionManager.itemVisualSize.width
     readonly property int availableItemWidth: itemWidth > 0 ? itemWidth : fallbackItemSize
@@ -72,6 +73,9 @@ AppletItemButton {
         width: root.width
         height: root.height
         property var plugin: {
+            if (!root.shellSurfaceActive) {
+                return null
+            }
             DockCompositor.pluginSurfaceRevision
             return DockCompositor.findSurface(model.surfaceId)
         }
@@ -133,6 +137,11 @@ AppletItemButton {
             return pluginItem.mapToItem(null, 0, 0)
         }
 
+        property var itemGlobalPoint: {
+            const point = pluginItem.localItemPoint()
+            return Qt.point(point.x, point.y)
+        }
+
         property var itemGlobalPos: {
             if (!pluginItem.Window.window || !surfaceItem.visible) {
                 return Qt.point(0, 0)
@@ -176,6 +185,7 @@ AppletItemButton {
             id: surfaceItem
             anchors.fill: parent
             shellSurface: pluginItem.plugin
+            surfaceItemEnabled: root.shellSurfaceActive
 
             onWidthChanged: updatePluginItemGeometryTimer.start()
             onHeightChanged: updatePluginItemGeometryTimer.start()

@@ -90,18 +90,10 @@ Control {
 
         ShellSurfaceItemProxy {
             id: surfaceLayer
-            onWidthChanged: {
+            function updateShellSurfaceGeometry() {
                 if (!shellSurface || !(shellSurface.updatePluginGeometry))
                     return
-                shellSurface.margins = root.itemMargins
-                shellSurface.updatePluginGeometry(Qt.rect(Math.round(itemScenePoint.x),
-                                                          Math.round(itemScenePoint.y),
-                                                          Math.round(width),
-                                                          Math.round(height)))
-            }
-            onHeightChanged: {
-                if (!shellSurface || !(shellSurface.updatePluginGeometry))
-                    return
+
                 shellSurface.margins = root.itemMargins
                 shellSurface.updatePluginGeometry(Qt.rect(Math.round(itemScenePoint.x),
                                                           Math.round(itemScenePoint.y),
@@ -128,15 +120,12 @@ Control {
                 return surfaceLayer.mapToItem(null, 0, 0)
             }
 
-            onItemScenePointChanged: {
-                if (!shellSurface || !(shellSurface.updatePluginGeometry))
-                    return
-                shellSurface.margins = root.itemMargins
-                shellSurface.updatePluginGeometry(Qt.rect(Math.round(itemScenePoint.x),
-                                                          Math.round(itemScenePoint.y),
-                                                          Math.round(width),
-                                                          Math.round(height)))
-            }
+            onWidthChanged: updateShellSurfaceGeometry()
+            onHeightChanged: updateShellSurfaceGeometry()
+            onItemScenePointChanged: updateShellSurfaceGeometry()
+            onShellSurfaceChanged: updateShellSurfaceGeometry()
+
+            Component.onCompleted: updateShellSurfaceGeometry()
         }
     }
 

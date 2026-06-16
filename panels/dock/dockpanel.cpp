@@ -198,6 +198,7 @@ DockPanel::DockPanel(QObject *parent)
     , m_dockScreen(nullptr)
     , m_loadTrayPlugins(new LoadTrayPlugins(this))
     , m_compositorReady(false)
+    , m_trayPluginsLoaded(false)
     , m_launcherShown(false)
     , m_dbusLauncherShown(false)
     , m_fullscreenLauncherShown(false)
@@ -215,10 +216,16 @@ DockPanel::DockPanel(QObject *parent)
     m_themeSyncTimer->setInterval(80);
     connect(m_themeSyncTimer, &QTimer::timeout, this, &DockPanel::syncColorThemeWithSystem);
 
-    connect(this, &DockPanel::compositorReadyChanged, this, [this] {
-        if (!m_compositorReady) return;
+    auto maybeLoadTrayPlugins = [this] {
+        if (m_trayPluginsLoaded || !m_compositorReady || !m_frontendWindowRect.isValid() || m_frontendWindowRect.isEmpty()) {
+            return;
+        }
+
+        m_trayPluginsLoaded = true;
         m_loadTrayPlugins->loadDockPlugins();
-    });
+    };
+    connect(this, &DockPanel::compositorReadyChanged, this, maybeLoadTrayPlugins);
+    connect(this, &DockPanel::frontendWindowRectChanged, this, maybeLoadTrayPlugins);
 }
 
 bool DockPanel::load()
@@ -329,6 +336,7 @@ bool DockPanel::init()
             }
             rootObject()->installEventFilter(this);
             Q_EMIT devicePixelRatioChanged(window()->devicePixelRatio());
+            QMetaObject::invokeMethod(this, &DockPanel::onWindowGeometryChanged, Qt::QueuedConnection);
         }
     });
 
@@ -619,6 +627,11 @@ void DockPanel::setIndicatorStyle(const IndicatorStyle& style)
 
 void DockPanel::onWindowGeometryChanged()
 {
+    const bool frontendRectChanged = setFrontendWindowRect(0, 0);
+    if (frontendRectChanged) {
+        Q_EMIT frontendWindowRectChanged(m_frontendWindowRect);
+    }
+
     if (!m_frontendGeometryReady) {
         if (geometryDebugLog() && window()) {
             qWarning() << "[dock-geometry]"
@@ -632,9 +645,6 @@ void DockPanel::onWindowGeometryChanged()
         return;
     }
 
-    if (setFrontendWindowRect(0, 0)) {
-        Q_EMIT frontendWindowRectChanged(m_frontendWindowRect);
-    }
     Q_EMIT geometryChanged(geometry());
 }
 

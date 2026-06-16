@@ -16,6 +16,8 @@
 
 #include <QAbstractItemModel>
 #include <QDBusInterface>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
 #include <QProcess>
 #include <QTimer>
 #include <QLoggingCategory>
@@ -647,13 +649,22 @@ void NotificationManager::initScreenLockedState()
     QDBusInterface interface(interfaceAndServiceName, path,
         "org.freedesktop.DBus.Properties", QDBusConnection::sessionBus());
 
-    QDBusReply<QDBusVariant> reply = interface.call("Get", "org.deepin.dde.LockFront1", "Visible");
-    if (reply.isValid()) {
-        m_screenLocked = reply.value().variant().toBool();
-    } else {
-        m_screenLocked = false;
-        qWarning(notifyLog) << "Failed to get the lock visible property:" << reply.error().message();
-    }
+    m_screenLocked = false;
+
+    auto *watcher = new QDBusPendingCallWatcher(
+        interface.asyncCall(QStringLiteral("Get"),
+                            QStringLiteral("org.deepin.dde.LockFront1"),
+                            QStringLiteral("Visible")),
+        this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *self) {
+        QDBusPendingReply<QDBusVariant> reply = *self;
+        if (reply.isValid()) {
+            m_screenLocked = reply.value().variant().toBool();
+        } else {
+            qWarning(notifyLog) << "Failed to get the lock visible property:" << reply.error().message();
+        }
+        self->deleteLater();
+    });
 
     QDBusConnection::sessionBus().connect(interfaceAndServiceName, path, interfaceAndServiceName,
         "Visible", this, SLOT(onScreenLockedChanged(bool)));
