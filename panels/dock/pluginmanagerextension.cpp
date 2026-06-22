@@ -30,6 +30,10 @@
 #include <QInputMethod>
 #include <QClipboard>
 #include <QMimeData>
+#include <QKeyEvent>
+#include <QPointer>
+#include <QQuickWindow>
+#include <QTimer>
 
 #include <QJsonObject>
 #include <QJsonParseError>
@@ -45,6 +49,128 @@
 #endif
 
 DGUI_USE_NAMESPACE
+
+namespace {
+
+bool surfaceHasViewInWindow(QWaylandSurface *surface, QQuickWindow *window)
+{
+    if (!surface || !window)
+        return false;
+
+    const auto views = surface->views();
+    for (auto *view : views) {
+        if (auto *quickItem = qobject_cast<QWaylandQuickItem *>(view->renderObject())) {
+            if (quickItem->window() == window)
+                return true;
+        }
+    }
+
+    return false;
+}
+
+class WaylandWindowKeyForwarder : public QObject
+{
+public:
+    explicit WaylandWindowKeyForwarder(QObject *parent = nullptr)
+        : QObject(parent)
+    {
+    }
+
+    void setTarget(QWaylandSeat *seat, QWaylandSurface *surface)
+    {
+        m_seat = seat;
+        m_surface = surface;
+    }
+
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() != QEvent::KeyPress && event->type() != QEvent::KeyRelease)
+            return QObject::eventFilter(watched, event);
+
+        auto *window = qobject_cast<QQuickWindow *>(watched);
+        if (!m_seat || !m_surface || !surfaceHasViewInWindow(m_surface, window))
+            return QObject::eventFilter(watched, event);
+
+        if (m_seat->keyboardFocus() != m_surface)
+            m_seat->setKeyboardFocus(m_surface);
+
+        auto *keyEvent = static_cast<QKeyEvent *>(event);
+        m_seat->sendKeyEvent(keyEvent->key(), event->type() == QEvent::KeyPress);
+        return true;
+    }
+
+private:
+    QPointer<QWaylandSeat> m_seat;
+    QPointer<QWaylandSurface> m_surface;
+};
+
+void installWaylandWindowKeyForwarder(QQuickWindow *window, QWaylandSeat *seat, QWaylandSurface *surface)
+{
+    if (!window || !seat || !surface)
+        return;
+
+    auto *forwarder = dynamic_cast<WaylandWindowKeyForwarder *>(
+        window->property("_ddeWaylandWindowKeyForwarder").value<QObject *>());
+    if (!forwarder) {
+        forwarder = new WaylandWindowKeyForwarder(window);
+        window->installEventFilter(forwarder);
+        window->setProperty("_ddeWaylandWindowKeyForwarder", QVariant::fromValue(static_cast<QObject *>(forwarder)));
+    }
+
+    forwarder->setTarget(seat, surface);
+}
+
+void applyWaylandQuickItemFocus(QWaylandQuickItem *quickItem, QWaylandSeat *seat)
+{
+    if (!quickItem)
+        return;
+
+    if (auto *window = quickItem->window()) {
+        installWaylandWindowKeyForwarder(window, seat, quickItem->surface());
+        if (!(window->flags() & Qt::WindowDoesNotAcceptFocus))
+            window->requestActivate();
+    }
+
+    quickItem->takeFocus(seat);
+    quickItem->forceActiveFocus(Qt::OtherFocusReason);
+}
+
+bool focusWaylandView(QWaylandView *view, QWaylandSeat *seat)
+{
+    if (!view || !view->surface())
+        return false;
+
+    if (auto *quickItem = qobject_cast<QWaylandQuickItem *>(view->renderObject())) {
+        applyWaylandQuickItemFocus(quickItem, seat);
+
+        // Popup/window frame focus handling can run later in the same event turn.
+        QPointer<QWaylandQuickItem> quickItemGuard(quickItem);
+        QPointer<QWaylandSeat> seatGuard(seat);
+        QTimer::singleShot(0, quickItem, [quickItemGuard, seatGuard] {
+            applyWaylandQuickItemFocus(quickItemGuard, seatGuard);
+        });
+
+        return true;
+    }
+
+    return seat ? seat->setKeyboardFocus(view->surface()) : false;
+}
+
+bool focusWaylandSurface(QWaylandSurface *surface, QWaylandSeat *seat)
+{
+    if (!surface)
+        return false;
+
+    const auto views = surface->views();
+    for (auto *view : views) {
+        if (focusWaylandView(view, seat))
+            return true;
+    }
+
+    return seat ? seat->setKeyboardFocus(surface) : false;
+}
+
+}
 
 struct WlQtTextInputMethodHelper : public QtWaylandServer::qt_text_input_method_v1 {
     static void setFocusCustom(QWaylandQtTextInputMethodPrivate *d, QWaylandSurface *surface) {
@@ -804,12 +930,7 @@ void PluginManager::setupMouseFocusListener()
     QObject::connect(seat, &QWaylandSeat::mouseFocusChanged, this,
         [seat](QWaylandView *newFocus, QWaylandView *oldFocus) {
             Q_UNUSED(oldFocus);
-            if(!newFocus)
-                return;
-
-            if (auto surface = newFocus->surface()) {
-                seat->setKeyboardFocus(surface);
-            }
+            focusWaylandView(newFocus, seat);
         });
 }
 
@@ -833,7 +954,7 @@ void PluginManager::setupTextInputProxy(QWaylandCompositor *compositor)
     // 如果它没有 Qt active focus，外层 compositor 发来的 commit_string 生成的
     // QInputMethodEvent 就会丢失，中文字无法提交到插件进程的输入框。
     // 因此，当 surfaceEnabled 触发时（插件进程输入框 enable IME），需要通过
-    // surface->views() 找到对应的 QWaylandQuickItem，调用 forceActiveFocus()，
+    // surface->views() 找到对应的 QWaylandQuickItem，调用 takeFocus() 和 forceActiveFocus()，
     // 确保 QInputMethodEvent 能正确路由到
     //   QWaylandQuickItem::inputMethodEvent()
     //   → QWaylandInputMethodControl::inputMethodEvent()
@@ -850,7 +971,7 @@ void PluginManager::setupTextInputProxy(QWaylandCompositor *compositor)
 
     // 【步骤1 & 2 实现】在 keyboardFocusChanged 中同时完成两件事：
     //   a) 同步 text input 协议对象的焦点（步骤1）
-    //   b) 用 Qt::UniqueConnection 连接 surfaceEnabled，让 QWaylandQuickItem 获取 active focus（步骤2）
+    //   b) 用 Qt::UniqueConnection 连接 surfaceEnabled，让 QWaylandQuickItem 获取键盘焦点和 Qt active focus（步骤2）
     QObject::connect(seat, &QWaylandSeat::keyboardFocusChanged, this, [this, seat]
         (QWaylandSurface *newFocus, QWaylandSurface *oldFocus) {
         Q_UNUSED(oldFocus);
@@ -872,7 +993,7 @@ void PluginManager::setupTextInputProxy(QWaylandCompositor *compositor)
                 auto *d = static_cast<QWaylandTextInputPrivate *>(QObjectPrivate::get(ext));
                 d->setFocus(newFocus);
                 // 步骤2：连接 surfaceEnabled，当插件输入框 enable IME 时，
-                // 让对应的 QWaylandQuickItem 获取 Qt active focus。
+                // 让对应的 QWaylandQuickItem 获取 Qt active focus 和 Wayland keyboard focus。
                 // Qt::UniqueConnection 防止重复连接。
                 QObject::connect(ext, SIGNAL(surfaceEnabled(QWaylandSurface*)),
                     this, SLOT(onTextInputSurfaceEnabled(QWaylandSurface*)),
@@ -903,14 +1024,7 @@ void PluginManager::onTextInputSurfaceEnabled(QWaylandSurface *surface)
     if (!surface)
         return;
 
-    // 通过 surface 的 views 找到对应的 QWaylandQuickItem，
-    // 调用 forceActiveFocus() 使其成为 Qt 的 active focus item，
-    // 这样外层 compositor 的 QInputMethodEvent 才能被路由到它。
-    const auto views = surface->views();
-    for (auto *view : views) {
-        if (auto *quickItem = qobject_cast<QWaylandQuickItem *>(view->renderObject())) {
-            quickItem->forceActiveFocus(Qt::OtherFocusReason);
-            break;
-        }
-    }
+    auto *compositor = surface->compositor();
+    auto *seat = compositor ? compositor->defaultSeat() : nullptr;
+    focusWaylandSurface(surface, seat);
 }
