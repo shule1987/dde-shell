@@ -3324,21 +3324,22 @@ void FashionLeftPluginProvider::openSystemMonitorPage()
         return;
     }
 
-    if (callDBusMethod(QLatin1String(SystemMonitorService),
-                       QLatin1String(SystemMonitorPath),
-                       QLatin1String(SystemMonitorInterface),
-                       QStringLiteral("showDeepinSystemMoniter"))) {
-        requestRaiseWindow();
-        return;
-    }
-
     if (!desktopFilePath.isEmpty() && launchDesktopEntry(desktopFilePath)) {
         requestRaiseWindow();
         return;
     }
 
-    launchCommand(QStringLiteral("deepin-system-monitor"));
-    requestRaiseWindow();
+    if (launchCommand(QStringLiteral("deepin-system-monitor"))) {
+        requestRaiseWindow();
+        return;
+    }
+
+    if (callDBusMethod(QLatin1String(SystemMonitorService),
+                       QLatin1String(SystemMonitorPath),
+                       QLatin1String(SystemMonitorInterface),
+                       QStringLiteral("showDeepinSystemMoniter"))) {
+        requestRaiseWindow();
+    }
 }
 
 void FashionLeftPluginProvider::refreshClock()
